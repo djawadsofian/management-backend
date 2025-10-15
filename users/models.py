@@ -10,7 +10,7 @@ class CustomUser(AbstractUser):
     ]
 
     phone_number = models.CharField(max_length=30, blank=True, null=True)
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_EMPLOYER)
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_ADMIN)  
 
     def is_admin(self):
         return self.role == self.ROLE_ADMIN or self.is_superuser

@@ -41,6 +41,17 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=2),
+    'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
 INSTALLED_APPS = [
@@ -51,7 +62,11 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'drf_yasg',
     'users',
+    'stock',
+    'clients',
+    'projects',
 ]
 
 MIDDLEWARE = [
@@ -136,4 +151,19 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-AUTH_USER_MODEL = 'users.CustomUser'    
+
+AUTH_USER_MODEL = 'users.CustomUser'
+
+# drf-yasg / Swagger settings: expose JWT Bearer auth in the UI
+SWAGGER_SETTINGS = {
+    'SECURITY_DEFINITIONS': {
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header',
+            'description': "JWT Authorization header using the Bearer scheme. Example: 'Authorization: Bearer {token}'",
+        }
+    },
+    # Show request headers for authenticated endpoints
+    'USE_SESSION_AUTH': False,
+}

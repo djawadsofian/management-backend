@@ -1,0 +1,34 @@
+from rest_framework import serializers
+from .models import CustomUser
+from django.contrib.auth.password_validation import validate_password
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomUser
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'phone_number', 'role')
+
+class EmployerCreateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=True)
+    class Meta:
+        model = CustomUser
+        fields = ('username','email','phone_number','password','first_name','last_name')
+
+    def validate_password(self, value):
+        validate_password(value)
+        return value
+
+    def create(self, validated_data):
+        password = validated_data.pop('password')
+        user = CustomUser(**validated_data)
+        user.set_password(password)
+        user.role = CustomUser.ROLE_EMPLOYER
+        user.save()
+        return user
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True)
+
+    def validate_new_password(self, value):
+        validate_password(value)
+        return value
