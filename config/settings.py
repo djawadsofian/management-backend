@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     'stock',
     'clients',
     'projects',
+    'invoices',
 ]
 
 MIDDLEWARE = [
