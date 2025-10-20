@@ -1,11 +1,10 @@
 from django.shortcuts import render
-
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import CustomUser
-from .serializers import UserSerializer, EmployerCreateSerializer, ChangePasswordSerializer
-from .permissions import IsAdmin
+from .serializers import UserSerializer, EmployerCreateSerializer, AssistantCreateSerializer, ChangePasswordSerializer
+from .permissions import IsAdmin, IsAdminOrAssistant
 from rest_framework.permissions import IsAuthenticated
 
 class EmployerViewSet(viewsets.ModelViewSet):
@@ -13,10 +12,21 @@ class EmployerViewSet(viewsets.ModelViewSet):
     Admin-only endpoints to manage employer accounts.
     """
     queryset = CustomUser.objects.filter(role=CustomUser.ROLE_EMPLOYER)
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrAssistant]  # Updated to allow assistants
     def get_serializer_class(self):
         if self.action == 'create':
             return EmployerCreateSerializer
+        return UserSerializer
+
+class AssistantViewSet(viewsets.ModelViewSet):
+    """
+    Admin-only endpoints to manage assistant accounts.
+    """
+    queryset = CustomUser.objects.filter(role=CustomUser.ROLE_ASSISTANT)
+    permission_classes = [IsAdmin]  # Only admins can manage assistants
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return AssistantCreateSerializer
         return UserSerializer
 
 class MeViewSet(viewsets.ViewSet):
@@ -45,4 +55,3 @@ class MeViewSet(viewsets.ViewSet):
         user.set_password(serializer.validated_data['new_password'])
         user.save()
         return Response({'detail': 'Password updated successfully.'})
-

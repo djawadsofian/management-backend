@@ -18,6 +18,7 @@ class Invoice(models.Model):
     issued_date = models.DateField(auto_now_add=True)
     due_date = models.DateField(blank=True, null=True)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    deposit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
     created_by = models.ForeignKey('users.CustomUser', on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -52,4 +53,3 @@ class InvoiceLine(models.Model):
 
     def __str__(self):
         return f"{self.invoice.invoice_number} - {self.description or self.product.name if self.product else 'No product'}"
-

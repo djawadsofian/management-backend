@@ -45,5 +45,7 @@ urlpatterns = [
     path('api/', include('users.urls')),
     path('api/stock/', include('stock.urls')),
     path('api/', include('clients.urls')),
+    path('api/', include('projects.urls')),
+
 
 ]

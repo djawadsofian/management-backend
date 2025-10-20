@@ -1,15 +1,11 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import EmployerViewSet, MeViewSet
+from .views import EmployerViewSet, AssistantViewSet, MeViewSet  # Import AssistantViewSet
 
 router = DefaultRouter()
 router.register(r'users/employers', EmployerViewSet, basename='employers')
+router.register(r'users/assistants', AssistantViewSet, basename='assistants')  # New route
 
-me = MeViewSet.as_view({
-    'get': 'me',
-    'patch': 'update_profile',
-    'post': 'change_password',
-})
 
 urlpatterns = [
     path('', include(router.urls)),

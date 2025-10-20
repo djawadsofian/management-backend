@@ -18,7 +18,10 @@ class ProductViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['sku', 'unit']
     search_fields = ['name', 'sku']
-    ordering_fields = ['name', 'quantity', 'reorder_threshold']
+    ordering_fields = [
+        'name', 'quantity', 'reorder_threshold', 
+        'buying_price', 'selling_price'  # Added new ordering fields
+    ]
     ordering = ['name']
 
     def get_permissions(self):
@@ -40,4 +43,3 @@ class ProductViewSet(viewsets.ModelViewSet):
             return self.get_paginated_response(serializer.data)
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
-
