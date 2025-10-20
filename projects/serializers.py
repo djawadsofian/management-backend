@@ -1,7 +1,11 @@
+
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
 from .models import Project, Maintenance
 from clients.serializers import ClientSerializer  # if exists
-from django.conf import settings
+
+User = get_user_model()
+
 
 
 class MaintenanceSerializer(serializers.ModelSerializer):
@@ -24,14 +28,14 @@ class ProjectListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ("id", "name", "client", "start_date", "end_date", "is_verified", "status")
+        fields = ("id", "name", "client", "start_date", "end_date", "is_verified", "status" ,"assigned_employers")
 
 
 class ProjectDetailSerializer(serializers.ModelSerializer):
     client = ClientSerializer(read_only=True)
     assigned_employers = serializers.PrimaryKeyRelatedField(
         many=True, 
-        queryset=settings.AUTH_USER_MODEL.objects.all()  # Fixed import
+        queryset=User.objects.all()
     )
     status = serializers.ReadOnlyField()  # Add status field
     maintenances = MaintenanceSerializer(many=True, read_only=True)  # Add maintenances
