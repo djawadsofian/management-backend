@@ -1,21 +1,24 @@
-from common.pagination import DynamicPagination
-from rest_framework import viewsets, status
+from common.pagination import StaticPagination
+from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import transaction
 from django.shortcuts import get_object_or_404
+from django_filters.rest_framework import DjangoFilterBackend
 from .models import Project, Maintenance
 from .serializers import ProjectListSerializer, ProjectDetailSerializer, MaintenanceSerializer
-from .permissions import IsAdminOrReadOnly, IsProjectAssigneeOrAdmin
+from .permissions import IsAdminOrReadOnly
 from rest_framework.permissions import IsAuthenticated
+
 from django.contrib.auth import get_user_model
 User = get_user_model()
 
 class ProjectViewSet(viewsets.ModelViewSet):
     queryset = Project.objects.select_related("client", "verified_by", "created_by").prefetch_related("assigned_employers", "maintenances")  # Added maintenances prefetch
     permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
-    pagination_class = DynamicPagination
-    filterset_fields = ["start_date", "end_date", "is_verified", "client", "status"]  # Added status
+    pagination_class = StaticPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter] 
+    filterset_fields = ["start_date", "end_date", "is_verified", "client"]  # Added status
     ordering_fields = ["start_date", "created_at", "status"]  # Added status
     search_fields = ["name", "client__name", "description"]  # Added search fields
 
@@ -122,7 +125,8 @@ class MaintenanceViewSet(viewsets.ModelViewSet):
     queryset = Maintenance.objects.select_related("project__client")
     serializer_class = MaintenanceSerializer
     permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
-    pagination_class = DynamicPagination
+    pagination_class = StaticPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter] 
     filterset_fields = ["next_maintenance_date", "project"]
     ordering_fields = ["next_maintenance_date", "created_at"]
     search_fields = ["project__name"]

@@ -1,4 +1,4 @@
-from common.pagination import DynamicPagination
+from common.pagination import StaticPagination
 from rest_framework import viewsets, filters
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
@@ -13,7 +13,7 @@ class ClientViewSet(viewsets.ModelViewSet):
     queryset = Client.objects.all().order_by('-created_at')
     serializer_class = ClientSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    pagination_class = DynamicPagination
+    pagination_class = StaticPagination
     filterset_fields = ['email']
     search_fields = ['name', 'email', 'phone_number']
     ordering_fields = ['name', 'created_at']

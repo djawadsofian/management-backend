@@ -1,4 +1,4 @@
-from common.pagination import DynamicPagination
+from common.pagination import StaticPagination
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -17,7 +17,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all().order_by('name')
     serializer_class = ProductSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    pagination_class = DynamicPagination
+    pagination_class = StaticPagination
     filterset_fields = ['sku', 'unit']
     search_fields = ['name', 'sku']
     ordering_fields = [

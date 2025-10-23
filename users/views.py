@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from common.pagination import DynamicPagination
+from common.pagination import StaticPagination
 from rest_framework import viewsets
 from .models import CustomUser
 from .serializers import UserSerializer, EmployerCreateSerializer, AssistantCreateSerializer
@@ -12,7 +12,7 @@ class EmployerViewSet(viewsets.ModelViewSet):
     """
     queryset = CustomUser.objects.filter(role=CustomUser.ROLE_EMPLOYER)
     permission_classes = [IsAdminOrAssistant]  # Updated to allow assistants
-    pagination_class = DynamicPagination
+    pagination_class = StaticPagination
     def get_serializer_class(self):
         if self.action == 'create':
             return EmployerCreateSerializer
@@ -24,7 +24,7 @@ class AssistantViewSet(viewsets.ModelViewSet):
     """
     queryset = CustomUser.objects.filter(role=CustomUser.ROLE_ASSISTANT)
     permission_classes = [IsAdmin]  # Only admins can manage assistants
-    pagination_class = DynamicPagination
+    pagination_class = StaticPagination
     def get_serializer_class(self):
         if self.action == 'create':
             return AssistantCreateSerializer
