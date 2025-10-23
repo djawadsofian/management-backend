@@ -56,6 +56,7 @@ class Command(BaseCommand):
             # Generate phone and fax numbers
             phone_base = f"0{random.randint(5, 7)}{random.randint(10, 99)}{random.randint(10, 99)}{random.randint(10, 99)}{random.randint(10, 99)}"
             
+            
             Client.objects.create(
                 name=name,
                 address=address_data,

@@ -1,4 +1,5 @@
 # invoices/views.py
+from common.pagination import DynamicPagination
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -21,6 +22,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     ).prefetch_related('lines', 'lines__product').order_by('-created_at')
     
     filter_backends = [DjangoFilterBackend]
+    pagination_class = DynamicPagination
     filterset_fields = ['status', 'project', 'created_by']
     search_fields = [
         'bon_de_commande', 'bon_de_versement', 
@@ -79,6 +81,7 @@ class InvoiceLineViewSet(viewsets.ModelViewSet):
     queryset = InvoiceLine.objects.select_related('invoice', 'product')
     serializer_class = InvoiceLineSerializer
     permission_classes = [IsAdminRole]  # Only admins can manage lines directly
+    pagination_class = DynamicPagination
     
     def get_queryset(self):
         queryset = super().get_queryset()

@@ -5,13 +5,14 @@ from django.contrib.auth.password_validation import validate_password
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'phone_number', 'role', 'wilaya')
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'phone_number', 'role', 'wilaya', 'group')
+        ref_name = 'CustomUserSerializer' # To avoid conflicts in Swagger documentation
 
 class EmployerCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True)
     class Meta:
         model = CustomUser
-        fields = ('username','email','phone_number','password','first_name','last_name', 'wilaya')
+        fields = ('username','email','phone_number','password','first_name','last_name', 'wilaya' ,'group')
 
     def validate_password(self, value):
         validate_password(value)
@@ -43,10 +44,3 @@ class AssistantCreateSerializer(serializers.ModelSerializer):
         user.save()
         return user
 
-class ChangePasswordSerializer(serializers.Serializer):
-    old_password = serializers.CharField(required=True)
-    new_password = serializers.CharField(required=True)
-
-    def validate_new_password(self, value):
-        validate_password(value)
-        return value

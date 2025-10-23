@@ -9,7 +9,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--employers', type=int, default=10, help='Number of employers to create')
         parser.add_argument('--assistants', type=int, default=5, help='Number of assistants to create')
-        parser.add_argument('--password', type=str, default='password123', help='Default password for all users')
+        parser.add_argument('--password', type=str, default='djawad', help='Default password for all users')
 
     def handle(self, *args, **options):
         fake = Faker()
@@ -45,7 +45,8 @@ class Command(BaseCommand):
                     last_name=fake.last_name(),
                     phone_number=f"0{random.randint(5, 7)}{random.randint(10, 99)}{random.randint(10, 99)}{random.randint(10, 99)}{random.randint(10, 99)}",
                     role=CustomUser.ROLE_EMPLOYER,
-                    wilaya=random.choice(algerian_wilayas)
+                    wilaya=random.choice(algerian_wilayas),
+                    group = random.choice(['Group A', 'Group B', 'Group C']) 
                 )
                 user.set_password(default_password)
                 user.save()
