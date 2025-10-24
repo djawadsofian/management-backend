@@ -39,11 +39,13 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
     )
     status = serializers.ReadOnlyField()  # Add status field
     maintenances = MaintenanceSerializer(many=True, read_only=True)  # Add maintenances
+    warranty_duration_display = serializers.ReadOnlyField()
+    warranty_end_date = serializers.ReadOnlyField()
 
     class Meta:
         model = Project
         fields = "__all__"
-        read_only_fields = ("verified_at", "verified_by", "created_at", "updated_at", "created_by", "is_verified", "status")
+        read_only_fields = ("warranty_duration_display", "warranty_end_date","verified_at", "verified_by", "created_at", "updated_at", "created_by", "is_verified", "status")
 
     def create(self, validated_data):
         assigned_employers_data = validated_data.pop('assigned_employers', [])

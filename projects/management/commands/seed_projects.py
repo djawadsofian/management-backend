@@ -83,7 +83,9 @@ class Command(BaseCommand):
                     start_date=start_date,
                     end_date=end_date,
                     description=fake.paragraph(nb_sentences=3),
-                    warranty_duration=random.choice([0, 6, 12, 24, 36]),
+                    warranty_years=random.choice([1, 2, 3]),
+                    warranty_months=random.choice([0, 1, 3, 6]),
+                    warranty_days=random.choice([10, 15, 20,25]),
                     is_verified=random.choice([True, False]),
                     created_by=created_by
                 )

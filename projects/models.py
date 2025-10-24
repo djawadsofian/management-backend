@@ -2,6 +2,8 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from clients.models import Client
+from dateutil.relativedelta import relativedelta
+
 
 class Project(models.Model):
     name = models.CharField(max_length=255)
@@ -9,7 +11,12 @@ class Project(models.Model):
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
     description = models.TextField(blank=True, null=True)
-    warranty_duration = models.PositiveIntegerField(default=0, help_text="Warranty period in months")
+
+ 
+    warranty_years = models.PositiveIntegerField(default=0)
+    warranty_months = models.PositiveIntegerField(default=0)
+    warranty_days = models.PositiveIntegerField(default=0)
+
     is_verified = models.BooleanField(default=False)
     verified_at = models.DateTimeField(null=True, blank=True)
     verified_by = models.ForeignKey(
@@ -53,11 +60,35 @@ class Project(models.Model):
         else:
             return "Active"
 
+    @property
+    def warranty_end_date(self):
+        """Compute warranty end date based on start date + duration"""
+        if not self.start_date:
+            return None
+        return self.start_date + relativedelta(
+            years=self.warranty_years,
+            months=self.warranty_months,
+            days=self.warranty_days
+        )
+
+    @property
+    def warranty_duration_display(self):
+        """Human-readable display of warranty"""
+        parts = []
+        if self.warranty_years:
+            parts.append(f"{self.warranty_years} year{'s' if self.warranty_years > 1 else ''}")
+        if self.warranty_months:
+            parts.append(f"{self.warranty_months} month{'s' if self.warranty_months > 1 else ''}")
+        if self.warranty_days:
+            parts.append(f"{self.warranty_days} day{'s' if self.warranty_days > 1 else ''}")
+        return " ".join(parts) if parts else "No warranty"
+
+
 class Maintenance(models.Model):
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='maintenances')
     duration = models.PositiveIntegerField(help_text="Duration in months")
     interval = models.PositiveIntegerField(help_text="Interval in months between maintenances")
-    next_maintenance_date = models.DateField(null=True, blank=True)  # Added missing field
+    next_maintenance_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -67,7 +98,5 @@ class Maintenance(models.Model):
     def save(self, *args, **kwargs):
         """Calculate next_maintenance_date if not set"""
         if not self.next_maintenance_date and self.project.start_date:
-            # Set next maintenance based on project start date and interval
-            from dateutil.relativedelta import relativedelta
             self.next_maintenance_date = self.project.start_date + relativedelta(months=self.interval)
         super().save(*args, **kwargs)
