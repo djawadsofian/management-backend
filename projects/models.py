@@ -51,14 +51,66 @@ class Project(models.Model):
 
     @property
     def status(self):
-        """Calculate project status based on dates"""
+        """
+        Calculate project status based on dates with business rules
+        """
         today = timezone.now().date()
-        if self.start_date > today:
+        
+        if not self.is_verified:
+            return "Draft"
+        elif self.start_date > today:
             return "Upcoming"
         elif self.end_date and self.end_date < today:
             return "Completed"
-        else:
+        elif self.start_date <= today <= (self.end_date or today):
             return "Active"
+        else:
+            return "Unknown"
+    
+    @property
+    def days_until_start(self):
+        """Days until project starts (negative if already started)"""
+        today = timezone.now().date()
+        return (self.start_date - today).days
+    
+    @property
+    def days_until_end(self):
+        """Days until project ends (negative if already ended)"""
+        if not self.end_date:
+            return None
+        today = timezone.now().date()
+        return (self.end_date - today).days
+    
+    @property
+    def duration_days(self):
+        """Project duration in days"""
+        if not self.end_date:
+            return None
+        return (self.end_date - self.start_date).days
+    
+    @property
+    def progress_percentage(self):
+        """Calculate project progress percentage based on timeline"""
+        if not self.end_date or self.status != "Active":
+            return 0 if self.status != "Completed" else 100
+        
+        total_duration = (self.end_date - self.start_date).days
+        if total_duration <= 0:
+            return 100
+        
+        days_passed = (timezone.now().date() - self.start_date).days
+        progress = min(100, max(0, (days_passed / total_duration) * 100))
+        return round(progress, 1)
+    
+    def is_starting_soon(self, days_threshold=2):
+        """Check if project starts within specified days"""
+        return 0 <= self.days_until_start <= days_threshold
+    
+    def is_ending_soon(self, days_threshold=2):
+        """Check if project ends within specified days"""
+        if not self.end_date:
+            return False
+        return 0 <= self.days_until_end <= days_threshold
 
     @property
     def warranty_end_date(self):
@@ -95,8 +147,58 @@ class Maintenance(models.Model):
     def __str__(self):
         return f"Maintenance for {self.project.name} (Next: {self.next_maintenance_date})"
 
+    def calculate_next_maintenance_date(self):
+        """Calculate next maintenance date based on interval"""
+        if not self.project.start_date:
+            return None
+        
+        # Start from project start date or last maintenance date
+        base_date = self.project.start_date
+        
+        # If we have a next_maintenance_date that's in the past, 
+        # calculate from there instead
+        if self.next_maintenance_date and self.next_maintenance_date < timezone.now().date():
+            base_date = self.next_maintenance_date
+        
+        next_date = base_date + relativedelta(months=self.interval)
+        return next_date
+    
     def save(self, *args, **kwargs):
-        """Calculate next_maintenance_date if not set"""
-        if not self.next_maintenance_date and self.project.start_date:
-            self.next_maintenance_date = self.project.start_date + relativedelta(months=self.interval)
+        """Calculate next_maintenance_date if not set or needs update"""
+        if not self.next_maintenance_date or self._should_update_maintenance_date():
+            self.next_maintenance_date = self.calculate_next_maintenance_date()
+        
         super().save(*args, **kwargs)
+    
+    def _should_update_maintenance_date(self):
+        """Check if maintenance date needs to be updated"""
+        if not self.next_maintenance_date:
+            return True
+        
+        # Update if the calculated date doesn't match current date
+        calculated_date = self.calculate_next_maintenance_date()
+        return calculated_date != self.next_maintenance_date
+    
+    @property
+    def is_overdue(self):
+        """Check if maintenance is overdue"""
+        if not self.next_maintenance_date:
+            return False
+        return self.next_maintenance_date < timezone.now().date()
+    
+    @property
+    def days_until_maintenance(self):
+        """Days until next maintenance (negative if overdue)"""
+        if not self.next_maintenance_date:
+            return None
+        return (self.next_maintenance_date - timezone.now().date()).days
+    
+    def reschedule_maintenance(self, new_date):
+        """Reschedule maintenance to a new date"""
+        self.next_maintenance_date = new_date
+        self.save(update_fields=['next_maintenance_date', 'updated_at'])
+    
+    def complete_maintenance(self):
+        """Mark maintenance as completed and schedule next one"""
+        self.next_maintenance_date = self.calculate_next_maintenance_date()
+        self.save(update_fields=['next_maintenance_date', 'updated_at'])

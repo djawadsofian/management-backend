@@ -58,6 +58,51 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             invoice.calculate_total()
             
         return Response(InvoiceLineSerializer(line).data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['post'])
+    def issue_invoice(self, request, pk=None):
+        """Issue a draft invoice (change status to ISSUED)"""
+        invoice = self.get_object()
+        
+        can_issue, message = invoice.can_be_issued()
+        if not can_issue:
+            return Response(
+                {'detail': message}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            BusinessRules.validate_invoice_status_change(
+                invoice.status, 
+                Invoice.STATUS_ISSUED
+            )
+            invoice.status = Invoice.STATUS_ISSUED
+            invoice.save(update_fields=['status'])
+            
+            return Response({'detail': 'Invoice issued successfully'})
+            
+        except ValidationError as e:
+            return Response(
+                {'detail': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'])
+    def apply_discount(self, request, pk=None):
+        """Apply percentage discount to invoice"""
+        invoice = self.get_object()
+        percentage = request.data.get('percentage')
+        
+        try:
+            percentage = Decimal(percentage)
+            invoice.apply_discount_percentage(percentage)
+            return Response({'detail': f'Discount of {percentage}% applied'})
+            
+        except (ValueError, ValidationError) as e:
+            return Response(
+                {'detail': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
     @action(detail=True, methods=['post'])
     def update_status(self, request, pk=None):

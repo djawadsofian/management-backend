@@ -14,6 +14,8 @@ class Command(BaseCommand):
         parser.add_argument('--clients', type=int, default=20, help='Number of clients to create')
         parser.add_argument('--products', type=int, default=25, help='Number of products to create')
         parser.add_argument('--projects', type=int, default=15, help='Number of projects to create')
+        parser.add_argument('--invoices', type=int, default=30, help='Number of invoices to create')
+        parser.add_argument('--max-lines', type=int, default=8, help='Maximum number of line items per invoice')
         parser.add_argument('--password', type=str, default='djawad', help='Default password for users')
         parser.add_argument('--maintenance-chance', type=int, default=70, help='Percentage chance to add maintenance to projects')
         parser.add_argument('--no-input', action='store_true', help='Run without confirmation prompt')
@@ -72,6 +74,10 @@ class Command(BaseCommand):
                     'count': options['projects'],
                     'maintenance_chance': options['maintenance_chance']
                 }),
+                ('seed_invoices', "Invoices", {
+                    'count': options['invoices'],
+                    'max_lines': options['max_lines']
+                }),
             ]
 
             for command, description, kwargs in seeding_steps:
@@ -91,6 +97,7 @@ class Command(BaseCommand):
             self.stdout.write(f"   🏢 Clients: {options['clients']} clients")
             self.stdout.write(f"   📦 Products: {options['products']} products")
             self.stdout.write(f"   🏗️  Projects: {options['projects']} projects")
+            self.stdout.write(f"   🧾 Invoices: {options['invoices']} invoices")
             self.stdout.write(f"   🔑 User password: {options['password']}")
             self.stdout.write("\n🚀 Your database is now populated with sample data!")
 
