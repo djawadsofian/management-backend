@@ -1,6 +1,8 @@
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+
+from clients.models import Client
 from .models import Project, Maintenance
 from clients.serializers import ClientSerializer  # if exists
 
@@ -32,7 +34,9 @@ class ProjectListSerializer(serializers.ModelSerializer):
 
 
 class ProjectDetailSerializer(serializers.ModelSerializer):
-    client = ClientSerializer(read_only=True)
+    client = serializers.PrimaryKeyRelatedField(
+        queryset= Client.objects.all()
+    )
     assigned_employers = serializers.PrimaryKeyRelatedField(
         many=True, 
         queryset=User.objects.all()
