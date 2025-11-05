@@ -71,3 +71,84 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         
         return instance
 
+
+
+class CalendarEventSerializer(serializers.Serializer):
+    """
+    Generic calendar event serializer.
+    Can represent any type of project-related event.
+    """
+    id = serializers.CharField(help_text="Unique event identifier")
+    title = serializers.CharField(help_text="Event title")
+    start = serializers.DateField(help_text="Event start date")
+    end = serializers.DateField(required=False, allow_null=True, help_text="Event end date")
+    type = serializers.ChoiceField(
+        choices=[
+            'project_start',
+            'project_end',
+            'project_active',
+            'maintenance',
+            'warranty_start',
+            'warranty_end'
+        ],
+        help_text="Type of event"
+    )
+    color = serializers.CharField(required=False, help_text="Color code for event")
+    description = serializers.CharField(required=False, allow_blank=True)
+    
+    # Related object IDs
+    project_id = serializers.IntegerField(required=False, allow_null=True)
+    client_id = serializers.IntegerField(required=False, allow_null=True)
+    client_name = serializers.CharField(required=False, allow_blank=True)
+    maintenance_id = serializers.IntegerField(required=False, allow_null=True)
+    
+    # Additional metadata
+    is_overdue = serializers.BooleanField(required=False, default=False)
+    is_upcoming = serializers.BooleanField(required=False, default=False)
+    days_difference = serializers.IntegerField(required=False, allow_null=True)
+    
+    # For full-calendar compatibility
+    all_day = serializers.BooleanField(default=True)
+    editable = serializers.BooleanField(default=False)
+
+
+class ProjectCalendarSerializer(serializers.ModelSerializer):
+    """
+    Serializer for project details in calendar context.
+    """
+    client_name = serializers.CharField(source='client.name', read_only=True)
+    assigned_employer_ids = serializers.PrimaryKeyRelatedField(
+        source='assigned_employers',
+        many=True,
+        read_only=True
+    )
+    warranty_end_date = serializers.DateField(read_only=True)
+    warranty_active = serializers.BooleanField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    
+    class Meta:
+        model = Project
+        fields = [
+            'id', 'name', 'client_name', 'start_date', 'end_date',
+            'warranty_end_date', 'warranty_active', 'status',
+            'assigned_employer_ids', 'is_verified', 'description'
+        ]
+
+
+class MaintenanceCalendarSerializer(serializers.ModelSerializer):
+    """
+    Serializer for maintenance details in calendar context.
+    """
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    client_name = serializers.CharField(source='project.client.name', read_only=True)
+    project_id = serializers.IntegerField(source='project.id', read_only=True)
+    is_overdue = serializers.BooleanField(read_only=True)
+    days_until_maintenance = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        model = Maintenance
+        fields = [
+            'id', 'project_id', 'project_name', 'client_name',
+            'next_maintenance_date', 'duration', 'interval',
+            'is_overdue', 'days_until_maintenance'
+        ]
