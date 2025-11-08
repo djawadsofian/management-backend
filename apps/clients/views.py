@@ -1,20 +1,29 @@
-from apps.core.pagination import StaticPagination
-from rest_framework import viewsets, filters
+from django_filters import rest_framework as filters
+from rest_framework import viewsets, filters as drf_filters
 from rest_framework.permissions import IsAuthenticated
-from django_filters.rest_framework import DjangoFilterBackend
-
-
+from apps.core.pagination import StaticPagination
 from .models import Client
 from .serializers import ClientSerializer
 from apps.core.permissions import IsAdmin
 
-class ClientViewSet(viewsets.ModelViewSet):
 
+class ClientFilter(filters.FilterSet):
+    """Custom filter for Client with JSONField support"""
+    province = filters.CharFilter(field_name='address__province', lookup_expr='iexact')
+    city = filters.CharFilter(field_name='address__city', lookup_expr='icontains')
+    postal_code = filters.CharFilter(field_name='address__postal_code')
+    
+    class Meta:
+        model = Client
+        fields = ['email', 'is_corporate', 'province', 'city', 'postal_code']
+
+
+class ClientViewSet(viewsets.ModelViewSet):
     queryset = Client.objects.all().order_by('-created_at')
     serializer_class = ClientSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [filters.DjangoFilterBackend, drf_filters.SearchFilter, drf_filters.OrderingFilter]
+    filterset_class = ClientFilter  # Use custom filter class
     pagination_class = StaticPagination
-    filterset_fields = ['email']
     search_fields = ['name', 'email', 'phone_number']
     ordering_fields = ['name', 'created_at']
     ordering = ['-created_at']
@@ -23,4 +32,3 @@ class ClientViewSet(viewsets.ModelViewSet):
         if self.action in ['list', 'retrieve']:
             return [IsAuthenticated()]
         return [IsAdmin()]
-

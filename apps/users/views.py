@@ -120,6 +120,9 @@ def my_calendar(request):
         - status: Filter by project status (DRAFT, UPCOMING, ACTIVE, COMPLETED)
         - is_verified: Filter by project verification status (true/false)
         - is_overdue: Filter overdue maintenances only (true/false)
+        - province: Filter by client's province (case-insensitive)
+        - city: Filter by client's city (case-insensitive partial match)
+        - postal_code: Filter by client's postal code
     
     Returns:
         List of calendar events with project start/end dates and maintenance schedules
@@ -128,6 +131,8 @@ def my_calendar(request):
         - /api/users/my-calendar/?event_type=maintenance
         - /api/users/my-calendar/?project_name=network&start_date=2025-01-01
         - /api/users/my-calendar/?client_name=acme&status=ACTIVE
+        - /api/users/my-calendar/?province=tlemcen&city=tlemcen
+        - /api/users/my-calendar/?province=oran&event_type=maintenance
     """
     from datetime import datetime
     from django.db.models import Q
@@ -135,7 +140,7 @@ def my_calendar(request):
     user = request.user
     
     # Get query parameters
-    event_type = request.query_params.get('event_type', 'all')  # all, project_start, project_end, maintenance
+    event_type = request.query_params.get('event_type', 'all')
     project_name = request.query_params.get('project_name', '').strip()
     client_name = request.query_params.get('client_name', '').strip()
     start_date = request.query_params.get('start_date', '').strip()
@@ -143,6 +148,11 @@ def my_calendar(request):
     project_status = request.query_params.get('status', '').strip()
     is_verified = request.query_params.get('is_verified', '').strip()
     is_overdue = request.query_params.get('is_overdue', '').strip()
+    
+    # Address filtering parameters
+    province = request.query_params.get('province', '').strip()
+    city = request.query_params.get('city', '').strip()
+    postal_code = request.query_params.get('postal_code', '').strip()
     
     # Determine which projects the user can see
     if user.role in [CustomUser.ROLE_ADMIN, CustomUser.ROLE_ASSISTANT] or user.is_superuser:
@@ -167,6 +177,16 @@ def my_calendar(request):
     if is_verified.lower() in ['true', 'false']:
         projects = projects.filter(is_verified=(is_verified.lower() == 'true'))
     
+    # Apply address filters using JSONField lookups
+    if province:
+        projects = projects.filter(client__address__province__iexact=province)
+    
+    if city:
+        projects = projects.filter(client__address__city__icontains=city)
+    
+    if postal_code:
+        projects = projects.filter(client__address__postal_code=postal_code)
+    
     # Build calendar events from projects
     events = []
     
@@ -174,6 +194,15 @@ def my_calendar(request):
         # Apply status filter (computed property)
         if project_status and project.status != project_status:
             continue
+        
+        # Get client address info for the event
+        client_address = {}
+        if project.client.address:
+            client_address = {
+                'province': project.client.address.get('province', ''),
+                'city': project.client.address.get('city', ''),
+                'postal_code': project.client.address.get('postal_code', ''),
+            }
         
         # Project start event
         if event_type in ['all', 'project_start']:
@@ -185,6 +214,7 @@ def my_calendar(request):
                 'project_id': project.id,
                 'project_name': project.name,
                 'client_name': project.client.name,
+                'client_address': client_address,
                 'status': project.status,
                 'is_verified': project.is_verified,
             })
@@ -199,6 +229,7 @@ def my_calendar(request):
                 'project_id': project.id,
                 'project_name': project.name,
                 'client_name': project.client.name,
+                'client_address': client_address,
                 'status': project.status,
                 'is_verified': project.is_verified,
             })
@@ -221,6 +252,7 @@ def my_calendar(request):
                         'project_id': project.id,
                         'project_name': project.name,
                         'client_name': project.client.name,
+                        'client_address': client_address,
                         'maintenance_id': maintenance.id,
                         'duration': maintenance.duration,
                         'interval': maintenance.interval,
@@ -263,6 +295,12 @@ def my_calendar(request):
         applied_filters['is_verified'] = is_verified
     if is_overdue:
         applied_filters['is_overdue'] = is_overdue
+    if province:
+        applied_filters['province'] = province
+    if city:
+        applied_filters['city'] = city
+    if postal_code:
+        applied_filters['postal_code'] = postal_code
     
     return Response({
         'user_role': user.role,
