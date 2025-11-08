@@ -20,7 +20,6 @@ from apps.core.mixins import (
 )
 from apps.core.pagination import StaticPagination
 from apps.core.permissions import IsAdminOrReadOnly
-from apps.projects.services import CalendarService
 from .models import Project, Maintenance
 from .serializers import (
     ProjectListSerializer,
