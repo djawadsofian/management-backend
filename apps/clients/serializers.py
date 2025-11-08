@@ -7,7 +7,7 @@ class ClientSerializer(serializers.ModelSerializer):
         # fields = ['id', 'name', 'email', 'phone_number', 'address', 'created_at', 'updated_at']
         fields = [
             'id', 'name', 'email', 'phone_number', 'address', 
-            'is_corporate', 'rc', 'nif', 'nis', 'ai','art', 'account_number', 'notes',
+            'is_corporate', 'rc', 'nif', 'nis', 'ai','art', 'account_number','fax', 'notes',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']

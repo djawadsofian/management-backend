@@ -3,9 +3,10 @@
 Refactored user management views.
 Simplified by removing redundant code and using proper mixins.
 """
-from rest_framework import viewsets
-from rest_framework.decorators import action
+from rest_framework import viewsets, status
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 
 from apps.core.pagination import StaticPagination
 from apps.core.permissions import IsAdmin, IsAdminOrAssistant
@@ -16,6 +17,7 @@ from .serializers import (
     EmployerCreateSerializer,
     AssistantCreateSerializer
 )
+from apps.projects.models import Project, Maintenance
 
 
 class BaseUserViewSet(StandardFilterMixin, viewsets.ModelViewSet):
@@ -35,6 +37,7 @@ class BaseUserViewSet(StandardFilterMixin, viewsets.ModelViewSet):
         return UserSerializer
 
 
+
 class EmployerViewSet(BaseUserViewSet):
     """
     ViewSet for managing employer accounts.
@@ -50,6 +53,7 @@ class EmployerViewSet(BaseUserViewSet):
         - DELETE /api/employers/{id}/ - Delete employer
         - POST /api/employers/{id}/deactivate/ - Deactivate employer
         - POST /api/employers/{id}/activate/ - Activate employer
+        - GET /api/employers/get_my_calendar/ - Get calendar events for current user
     """
     queryset = CustomUser.objects.filter(role=CustomUser.ROLE_EMPLOYER)
     permission_classes = [IsAdminOrAssistant]
@@ -87,7 +91,183 @@ class AssistantViewSet(BaseUserViewSet):
         - GET /api/assistants/{id}/ - Retrieve assistant
         - PUT/PATCH /api/assistants/{id}/ - Update assistant
         - DELETE /api/assistants/{id}/ - Delete assistant
+        - GET /api/assistants/get_my_calendar/ - Get calendar events for current user
     """
     queryset = CustomUser.objects.filter(role=CustomUser.ROLE_ASSISTANT)
     permission_classes = [IsAdmin]
     create_serializer_class = AssistantCreateSerializer
+
+
+
+
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def my_calendar(request):
+    """
+    Get calendar events for the currently authenticated user.
+    
+    - Admins and Assistants: See all projects and maintenances
+    - Employers: See only assigned projects and their maintenances
+    
+    Query Parameters:
+        - event_type: Filter by event type (project_start, project_end, maintenance, or all)
+        - project_name: Search by project name (case-insensitive partial match)
+        - client_name: Search by client name (case-insensitive partial match)
+        - start_date: Filter events from this date (YYYY-MM-DD)
+        - end_date: Filter events until this date (YYYY-MM-DD)
+        - status: Filter by project status (DRAFT, UPCOMING, ACTIVE, COMPLETED)
+        - is_verified: Filter by project verification status (true/false)
+        - is_overdue: Filter overdue maintenances only (true/false)
+    
+    Returns:
+        List of calendar events with project start/end dates and maintenance schedules
+    
+    Examples:
+        - /api/users/my-calendar/?event_type=maintenance
+        - /api/users/my-calendar/?project_name=network&start_date=2025-01-01
+        - /api/users/my-calendar/?client_name=acme&status=ACTIVE
+    """
+    from datetime import datetime
+    from django.db.models import Q
+    
+    user = request.user
+    
+    # Get query parameters
+    event_type = request.query_params.get('event_type', 'all')  # all, project_start, project_end, maintenance
+    project_name = request.query_params.get('project_name', '').strip()
+    client_name = request.query_params.get('client_name', '').strip()
+    start_date = request.query_params.get('start_date', '').strip()
+    end_date = request.query_params.get('end_date', '').strip()
+    project_status = request.query_params.get('status', '').strip()
+    is_verified = request.query_params.get('is_verified', '').strip()
+    is_overdue = request.query_params.get('is_overdue', '').strip()
+    
+    # Determine which projects the user can see
+    if user.role in [CustomUser.ROLE_ADMIN, CustomUser.ROLE_ASSISTANT] or user.is_superuser:
+        # Admins and assistants see all projects
+        projects = Project.objects.select_related('client').prefetch_related('maintenances')
+    elif user.role == CustomUser.ROLE_EMPLOYER:
+        # Employers see only their assigned projects
+        projects = Project.objects.filter(
+            assigned_employers=user
+        ).select_related('client').prefetch_related('maintenances')
+    else:
+        # No projects for other roles
+        projects = Project.objects.none()
+    
+    # Apply project filters
+    if project_name:
+        projects = projects.filter(name__icontains=project_name)
+    
+    if client_name:
+        projects = projects.filter(client__name__icontains=client_name)
+    
+    if is_verified.lower() in ['true', 'false']:
+        projects = projects.filter(is_verified=(is_verified.lower() == 'true'))
+    
+    # Build calendar events from projects
+    events = []
+    
+    for project in projects:
+        # Apply status filter (computed property)
+        if project_status and project.status != project_status:
+            continue
+        
+        # Project start event
+        if event_type in ['all', 'project_start']:
+            events.append({
+                'id': f'project-{project.id}-start',
+                'title': f'Start: {project.name}',
+                'start': project.start_date.isoformat(),
+                'type': 'project_start',
+                'project_id': project.id,
+                'project_name': project.name,
+                'client_name': project.client.name,
+                'status': project.status,
+                'is_verified': project.is_verified,
+            })
+        
+        # Project end event (if exists)
+        if project.end_date and event_type in ['all', 'project_end']:
+            events.append({
+                'id': f'project-{project.id}-end',
+                'title': f'End: {project.name}',
+                'start': project.end_date.isoformat(),
+                'type': 'project_end',
+                'project_id': project.id,
+                'project_name': project.name,
+                'client_name': project.client.name,
+                'status': project.status,
+                'is_verified': project.is_verified,
+            })
+        
+        # Maintenance events
+        if event_type in ['all', 'maintenance']:
+            for maintenance in project.maintenances.all():
+                if maintenance.next_maintenance_date:
+                    # Apply overdue filter if specified
+                    if is_overdue.lower() == 'true' and not maintenance.is_overdue:
+                        continue
+                    elif is_overdue.lower() == 'false' and maintenance.is_overdue:
+                        continue
+                    
+                    events.append({
+                        'id': f'maintenance-{maintenance.id}',
+                        'title': f'Maintenance: {project.name}',
+                        'start': maintenance.next_maintenance_date.isoformat(),
+                        'type': 'maintenance',
+                        'project_id': project.id,
+                        'project_name': project.name,
+                        'client_name': project.client.name,
+                        'maintenance_id': maintenance.id,
+                        'duration': maintenance.duration,
+                        'interval': maintenance.interval,
+                        'is_overdue': maintenance.is_overdue,
+                    })
+    
+    # Apply date range filters
+    if start_date:
+        try:
+            start_date_obj = datetime.fromisoformat(start_date).date()
+            events = [e for e in events if datetime.fromisoformat(e['start']).date() >= start_date_obj]
+        except ValueError:
+            pass
+    
+    if end_date:
+        try:
+            end_date_obj = datetime.fromisoformat(end_date).date()
+            events = [e for e in events if datetime.fromisoformat(e['start']).date() <= end_date_obj]
+        except ValueError:
+            pass
+    
+    # Sort events by date
+    events.sort(key=lambda x: x['start'])
+    
+    # Build filter summary
+    applied_filters = {}
+    if event_type != 'all':
+        applied_filters['event_type'] = event_type
+    if project_name:
+        applied_filters['project_name'] = project_name
+    if client_name:
+        applied_filters['client_name'] = client_name
+    if start_date:
+        applied_filters['start_date'] = start_date
+    if end_date:
+        applied_filters['end_date'] = end_date
+    if project_status:
+        applied_filters['status'] = project_status
+    if is_verified:
+        applied_filters['is_verified'] = is_verified
+    if is_overdue:
+        applied_filters['is_overdue'] = is_overdue
+    
+    return Response({
+        'user_role': user.role,
+        'user_name': user.get_full_name() or user.username,
+        'total_events': len(events),
+        'applied_filters': applied_filters,
+        'events': events
+    })
