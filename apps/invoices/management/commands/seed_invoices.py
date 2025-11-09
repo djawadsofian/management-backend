@@ -1,3 +1,4 @@
+# apps/invoices/management/commands/seed_invoices.py
 from django.core.management.base import BaseCommand
 from faker import Faker
 import random
@@ -7,21 +8,25 @@ from apps.invoices.models import Invoice, InvoiceLine
 from apps.projects.models import Project
 from apps.stock.models import Product
 from django.contrib.auth import get_user_model
-from django.db import models
+from django.db import models, transaction
 
 User = get_user_model()
 
 class Command(BaseCommand):
-    help = "Seed the database with random invoices for testing"
+    help = "Seed the database with random invoices (respecting strict stock logic)"
 
     def add_arguments(self, parser):
         parser.add_argument('--count', type=int, default=30, help='Number of invoices to create')
         parser.add_argument('--max-lines', type=int, default=8, help='Maximum number of line items per invoice')
+        parser.add_argument('--issue-percent', type=int, default=60, help='Percentage of invoices to issue (0-100)')
+        parser.add_argument('--paid-percent', type=int, default=30, help='Percentage of issued to mark as paid (0-100)')
 
     def handle(self, *args, **options):
         fake = Faker()
         count = options['count']
         max_lines = options['max_lines']
+        issue_percent = options['issue_percent']
+        paid_percent = options['paid_percent']
         
         # Get available data
         projects = Project.objects.all()
@@ -43,109 +48,134 @@ class Command(BaseCommand):
         self.stdout.write("🧾 Starting invoice seeding...")
 
         invoices_created = 0
+        invoices_issued = 0
+        invoices_paid = 0
         lines_created = 0
-        
-        # Document types for realistic data
-        bon_types = ["BC", "BV", "BR", "FAC"]
-        status_choices = [Invoice.STATUS_DRAFT, Invoice.STATUS_ISSUED, Invoice.STATUS_PAID, Invoice.STATUS_CANCELLED]
 
         for i in range(count):
             try:
-                # Select random project and creator
-                project = random.choice(projects)
-                created_by = random.choice(admin_users)
-                
-                # Generate document numbers
-                year_suffix = datetime.now().year % 100
-                bon_de_commande = f"BC{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
-                bon_de_versement = f"BV{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
-                bon_de_reception = f"BR{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
-                facture = f"FAC{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
-                
-                # Generate dates
-                issued_date = fake.date_between(start_date='-1y', end_date='today')
-                due_date = issued_date + timedelta(days=random.randint(15, 90))
-                
-                # Select status
-                status = random.choice(status_choices)
-                
-                # Create invoice
-                invoice = Invoice.objects.create(
-                    project=project,
-                    bon_de_commande=bon_de_commande,
-                    bon_de_versement=bon_de_versement,
-                    bon_de_reception=bon_de_reception,
-                    facture=facture,
-                    issued_date=issued_date,
-                    due_date=due_date,
-                    deposit_price=Decimal(str(round(random.uniform(0, 1000), 2))),
-                    status=status,
-                    created_by=created_by
-                )
-                
-                # Add line items
-                num_lines = random.randint(1, max_lines)
-                invoice_lines = []
-                
-                for j in range(num_lines):
-                    product = random.choice(products)
-                    quantity = Decimal(str(random.randint(1, 10)))
+                with transaction.atomic():
+                    # Select random project and creator
+                    project = random.choice(projects)
+                    created_by = random.choice(admin_users)
                     
-                    # Use product selling price as base, with some variation
-                    base_price = product.selling_price
-                    # Convert float operations to Decimal
-                    variation = Decimal(str(random.uniform(0.8, 1.5)))
-                    unit_price = (base_price * variation).quantize(Decimal('0.01'))
+                    # Generate document numbers
+                    year_suffix = datetime.now().year % 100
+                    bon_de_commande = f"BC{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
+                    bon_de_versement = f"BV{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
+                    bon_de_reception = f"BR{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
+                    facture = f"FAC{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
                     
-                    # Calculate discount
-                    if random.choice([True, False]):
-                        discount_rate = Decimal(str(random.uniform(0, 0.2)))
-                        discount = (unit_price * discount_rate).quantize(Decimal('0.01'))
-                    else:
-                        discount = Decimal('0.00')
+                    # Generate dates
+                    issued_date = fake.date_between(start_date='-1y', end_date='today')
+                    due_date = issued_date + timedelta(days=random.randint(15, 90))
                     
-                    line = InvoiceLine.objects.create(
-                        invoice=invoice,
-                        product=product,
-                        description=fake.sentence(nb_words=6) if random.choice([True, False]) else "",
-                        quantity=quantity,
-                        unit_price=unit_price,
-                        discount=discount
+                    # Random TVA (most common rates in Algeria)
+                    tva_rates = [Decimal('19.00'), Decimal('9.00'), Decimal('0.00')]
+                    tva = random.choice(tva_rates)
+                    
+                    # Create invoice in DRAFT status
+                    invoice = Invoice.objects.create(
+                        project=project,
+                        bon_de_commande=bon_de_commande,
+                        bon_de_versement=bon_de_versement,
+                        bon_de_reception=bon_de_reception,
+                        facture=facture,
+                        due_date=due_date,
+                        tva=tva,
+                        deposit_price=Decimal(str(round(random.uniform(0, 500), 2))),
+                        status=Invoice.STATUS_DRAFT,
+                        created_by=created_by
                     )
-                    invoice_lines.append(line)
-                    lines_created += 1
-                
-                
-                invoices_created += 1
-                self.stdout.write(f"   ✅ Created invoice: {invoice.facture or invoice.bon_de_commande or 'No Number'}")
-                self.stdout.write(f"      📊 Total: {invoice.total} | Lines: {num_lines} | Status: {invoice.get_status_display()}")
-                
+                    
+                    # Add line items (stock NOT affected yet - invoice is DRAFT)
+                    num_lines = random.randint(1, max_lines)
+                    
+                    for j in range(num_lines):
+                        product = random.choice(products)
+                        
+                        # Limit quantity to available stock for later issuing
+                        max_qty = min(product.quantity, 10)
+                        if max_qty < 1:
+                            continue  # Skip if no stock
+                        
+                        quantity = Decimal(str(random.randint(1, max_qty)))
+                        
+                        # Use product selling price as base
+                        base_price = product.selling_price
+                        variation = Decimal(str(random.uniform(0.8, 1.5)))
+                        unit_price = (base_price * variation).quantize(Decimal('0.01'))
+                        
+                        # Calculate discount
+                        if random.choice([True, False]):
+                            discount_rate = Decimal(str(random.uniform(0, 0.15)))
+                            discount = (unit_price * quantity * discount_rate).quantize(Decimal('0.01'))
+                        else:
+                            discount = Decimal('0.00')
+                        
+                        # Create line (no stock change - DRAFT)
+                        line = InvoiceLine.objects.create(
+                            invoice=invoice,
+                            product=product,
+                            description=fake.sentence(nb_words=6) if random.choice([True, False]) else "",
+                            quantity=quantity,
+                            unit_price=unit_price,
+                            discount=discount
+                        )
+                        lines_created += 1
+                    
+                    # Calculate totals
+                    invoice.calculate_totals()
+                    
+                    invoices_created += 1
+                    self.stdout.write(f"   ✅ Created DRAFT invoice: {invoice.facture or invoice.bon_de_commande or f'INV-{invoice.id}'}")
+                    self.stdout.write(f"      📊 Subtotal: {invoice.subtotal} | TVA {invoice.tva}%: {invoice.tax_amount} | Total: {invoice.total}")
+                    
+                    # Decide if we should issue this invoice
+                    if random.randint(1, 100) <= issue_percent:
+                        try:
+                            invoice.issue()  # This affects stock
+                            invoices_issued += 1
+                            self.stdout.write(f"      ✅ Invoice ISSUED (stock deducted)")
+                            
+                            # Decide if we should mark as paid
+                            if random.randint(1, 100) <= paid_percent:
+                                invoice.mark_paid()
+                                invoices_paid += 1
+                                self.stdout.write(f"      💰 Invoice PAID (locked)")
+                        except Exception as e:
+                            self.stdout.write(f"      ⚠️  Could not issue: {e}")
+                    
             except Exception as e:
                 self.stdout.write(f"   ❌ Error creating invoice {i+1}: {e}")
                 import traceback
                 self.stdout.write(f"   🔍 Detailed error: {traceback.format_exc()}")
 
+        # Summary
         self.stdout.write(self.style.SUCCESS(
-            f"🎉 Successfully created {invoices_created} invoices with {lines_created} line items!"
+            f"\n🎉 Successfully created {invoices_created} invoices with {lines_created} line items!"
         ))
         
-        # Display invoice status summary
-        status_summary = {}
-        for status_code, status_name in Invoice.STATUS_CHOICES:
-            count = Invoice.objects.filter(status=status_code).count()
-            status_summary[status_name] = count
+        self.stdout.write(f"\n📊 Invoice Status Summary:")
+        self.stdout.write(f"   📋 DRAFT: {invoices_created - invoices_issued}")
+        self.stdout.write(f"   📤 ISSUED: {invoices_issued - invoices_paid}")
+        self.stdout.write(f"   💰 PAID: {invoices_paid}")
         
-        self.stdout.write(f"📊 Invoice Status Summary:")
-        for status_name, count in status_summary.items():
-            self.stdout.write(f"   📋 {status_name}: {count}")
+        # Financial summary
+        draft_total = Invoice.objects.filter(status=Invoice.STATUS_DRAFT).aggregate(
+            total=models.Sum('total')
+        )['total'] or Decimal('0.00')
         
-        # Display financial summary
-        total_invoiced = Invoice.objects.aggregate(total=models.Sum('total'))['total'] or Decimal('0.00')
-        paid_invoices = Invoice.objects.filter(status=Invoice.STATUS_PAID).aggregate(total=models.Sum('total'))['total'] or Decimal('0.00')
+        issued_total = Invoice.objects.filter(status=Invoice.STATUS_ISSUED).aggregate(
+            total=models.Sum('total')
+        )['total'] or Decimal('0.00')
         
-        collection_rate = (paid_invoices / total_invoiced * Decimal('100.00')).quantize(Decimal('0.1')) if total_invoiced > Decimal('0.00') else Decimal('0.0')
+        paid_total = Invoice.objects.filter(status=Invoice.STATUS_PAID).aggregate(
+            total=models.Sum('total')
+        )['total'] or Decimal('0.00')
         
-        self.stdout.write(f"💰 Financial Summary:")
-        self.stdout.write(f"   💵 Total Invoiced: {total_invoiced:.2f}")
-        self.stdout.write(f"   💰 Total Paid: {paid_invoices:.2f}")
-        self.stdout.write(f"   📈 Collection Rate: {collection_rate}%")
+        self.stdout.write(f"\n💰 Financial Summary:")
+        self.stdout.write(f"   📋 Draft Total: {draft_total:.2f} (stock not affected)")
+        self.stdout.write(f"   📤 Issued Total: {issued_total:.2f} (stock affected)")
+        self.stdout.write(f"   💵 Paid Total: {paid_total:.2f} (locked)")
+        self.stdout.write(f"   📈 Grand Total: {(draft_total + issued_total + paid_total):.2f}")

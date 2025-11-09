@@ -1,7 +1,6 @@
-# invoices/serializers.py
+# apps/invoices/serializers.py
 from rest_framework import serializers
 from .models import Invoice, InvoiceLine
-
 from apps.stock.serializers import ProductSerializer
 
 
@@ -31,6 +30,20 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Discount cannot be negative")
         return value
 
+    def validate(self, data):
+        """Check if invoice is editable"""
+        # Get invoice from context or instance
+        invoice = self.context.get('invoice')
+        if not invoice and self.instance:
+            invoice = self.instance.invoice
+        
+        if invoice and not invoice.is_editable:
+            raise serializers.ValidationError(
+                "Cannot modify lines on a paid invoice"
+            )
+        
+        return data
+
 
 class InvoiceSerializer(serializers.ModelSerializer):
     lines = InvoiceLineSerializer(many=True, read_only=True)
@@ -38,15 +51,26 @@ class InvoiceSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(source='project.client.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     
+    # Status flags
+    is_draft = serializers.BooleanField(read_only=True)
+    is_issued = serializers.BooleanField(read_only=True)
+    is_paid = serializers.BooleanField(read_only=True)
+    is_editable = serializers.BooleanField(read_only=True)
+    stock_is_affected = serializers.BooleanField(read_only=True)
+    
     class Meta:
         model = Invoice
         fields = [
             'id', 'project', 'project_name', 'client_name',
             'bon_de_commande', 'bon_de_versement', 'bon_de_reception', 'facture',
-            'issued_date', 'due_date', 'total', 'deposit_price', 'status',
-            'created_by', 'created_by_name', 'created_at', 'lines'
+            'issued_date', 'due_date', 
+            'subtotal', 'tva', 'tax_amount', 'total', 'deposit_price', 
+            'status', 'created_by', 'created_by_name', 'created_at',
+            'is_draft', 'is_issued', 'is_paid', 'is_editable', 'stock_is_affected',
+            'lines'
         ]
-        read_only_fields = ['total', 'created_at']
+        read_only_fields = ['subtotal', 'tax_amount', 'total', 'created_at', 
+                           'is_draft', 'is_issued', 'is_paid', 'is_editable', 'stock_is_affected']
 
 
 class InvoiceCreateSerializer(serializers.ModelSerializer):
@@ -56,18 +80,31 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
         model = Invoice
         fields = [
             'id', 'project', 'bon_de_commande', 'bon_de_versement', 
-            'bon_de_reception', 'facture', 'due_date', 'deposit_price', 
+            'bon_de_reception', 'facture', 'due_date', 'tva', 'deposit_price', 
             'status', 'lines'
         ]
+        read_only_fields = ['status']  # Always starts as DRAFT
+
+    def validate_status(self, value):
+        """Ensure new invoices start as DRAFT"""
+        if value != Invoice.STATUS_DRAFT:
+            raise serializers.ValidationError("New invoices must start as DRAFT")
+        return value
 
     def create(self, validated_data):
         lines_data = validated_data.pop('lines', [])
+        
+        # Force status to DRAFT
+        validated_data['status'] = Invoice.STATUS_DRAFT
+        
         invoice = Invoice.objects.create(**validated_data)
         
+        # Create lines (won't affect stock since invoice is DRAFT)
         for line_data in lines_data:
             InvoiceLine.objects.create(invoice=invoice, **line_data)
-            
-        invoice.calculate_total()
+        
+        # Calculate totals
+        invoice.calculate_totals()
         return invoice
 
 
@@ -76,6 +113,50 @@ class InvoiceUpdateSerializer(serializers.ModelSerializer):
         model = Invoice
         fields = [
             'project', 'bon_de_commande', 'bon_de_versement', 
-            'bon_de_reception', 'facture', 'due_date', 'deposit_price', 
-            'status'
+            'bon_de_reception', 'facture', 'due_date', 'tva', 'deposit_price'
         ]
+
+    def validate(self, data):
+        """Validate that invoice is editable"""
+        if self.instance and not self.instance.is_editable:
+            raise serializers.ValidationError(
+                "Cannot update a paid invoice"
+            )
+        return data
+
+    def update(self, instance, validated_data):
+        """Update invoice and recalculate totals if TVA changed"""
+        tva_changed = 'tva' in validated_data and validated_data['tva'] != instance.tva
+        
+        instance = super().update(instance, validated_data)
+        
+        if tva_changed:
+            instance.calculate_totals()
+        
+        return instance
+
+
+class InvoiceStatusUpdateSerializer(serializers.Serializer):
+    """Serializer for status transition actions"""
+    action = serializers.ChoiceField(
+        choices=['issue', 'mark_paid', 'revert_to_draft'],
+        help_text="Action to perform: issue (DRAFT->ISSUED), mark_paid (ISSUED->PAID), revert_to_draft (ISSUED->DRAFT)"
+    )
+    
+    def validate_action(self, value):
+        invoice = self.context.get('invoice')
+        
+        if not invoice:
+            raise serializers.ValidationError("Invoice not found in context")
+        
+        # Validate transitions
+        if value == 'issue' and invoice.status != Invoice.STATUS_DRAFT:
+            raise serializers.ValidationError("Can only issue draft invoices")
+        
+        if value == 'mark_paid' and invoice.status != Invoice.STATUS_ISSUED:
+            raise serializers.ValidationError("Can only mark issued invoices as paid")
+        
+        if value == 'revert_to_draft' and invoice.status != Invoice.STATUS_ISSUED:
+            raise serializers.ValidationError("Can only revert issued invoices to draft")
+        
+        return value
