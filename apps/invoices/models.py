@@ -10,6 +10,7 @@ from django.core.exceptions import ValidationError
 
 from apps.core.models import TimeStampedModel
 from apps.stock.services import StockService
+from django.db import transaction
 
 
 class Invoice(TimeStampedModel):
@@ -103,15 +104,22 @@ class Invoice(TimeStampedModel):
         return self.total_after_deposit
 
     def calculate_total(self):
-        """Recalculate and save total from line items"""
-        total = self.subtotal
-        
-        if total < 0:
-            raise ValidationError("Invoice total cannot be negative")
-        
-        self.total = total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        self.save(update_fields=['total', 'updated_at'])
-        return self.total
+        with transaction.atomic():
+            locked_invoice = Invoice.objects.select_for_update().get(pk=self.pk)
+            
+            # Calculate total from locked data (uses your existing subtotal property)
+            total = locked_invoice.subtotal
+            
+            if total < 0:
+                raise ValidationError("Invoice total cannot be negative")
+            
+            # Update the locked instance
+            locked_invoice.total = total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            locked_invoice.save(update_fields=['total', 'updated_at'])
+            
+            # Refresh current instance
+            self.refresh_from_db()
+            return self.total
 
     # Status Properties
     @property
@@ -225,35 +233,36 @@ class InvoiceLine(TimeStampedModel):
         return total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     def save(self, *args, **kwargs):
+        
         """
         Override save to:
         1. Calculate line total
         2. Process stock changes
         3. Update invoice total
         """
-        is_new = self.pk is None
-        old_quantity = None
+        with transaction.atomic():
+            is_new = self.pk is None
+            old_quantity = None
+            
+            if not is_new:
+                try:
+                    old_line = InvoiceLine.objects.select_for_update().get(pk=self.pk)
+                    old_quantity = old_line.quantity
+                except InvoiceLine.DoesNotExist:
+                    pass
         
-        # Get old quantity for existing lines
-        if not is_new:
-            try:
-                old_line = InvoiceLine.objects.get(pk=self.pk)
-                old_quantity = old_line.quantity
-            except InvoiceLine.DoesNotExist:
-                pass
-        
-        # Calculate line total
-        self.line_total = self.calculate_line_total()
-        
-        # Save the line
-        super().save(*args, **kwargs)
-        
-        # Process stock changes
-        if self.product:
-            StockService.process_invoice_line_stock(self, old_quantity)
-        
-        # Update invoice total
-        self.invoice.calculate_total()
+            # Calculate line total
+            self.line_total = self.calculate_line_total()
+            
+            # Save the line
+            super().save(*args, **kwargs)
+            
+            # Process stock changes
+            if self.product:
+                StockService.process_invoice_line_stock(self, old_quantity)
+            
+            # Update invoice total
+            self.invoice.calculate_total()
 
     def delete(self, *args, **kwargs):
         """
