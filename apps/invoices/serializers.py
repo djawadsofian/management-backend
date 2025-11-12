@@ -83,7 +83,7 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
             'bon_de_reception', 'facture', 'due_date', 'tva', 'deposit_price', 
             'status', 'lines'
         ]
-        read_only_fields = ['status']  # Always starts as DRAFT
+        read_only_fields = ['status','facture']  # Always starts as DRAFT
 
     def validate_status(self, value):
         """Ensure new invoices start as DRAFT"""
@@ -96,6 +96,7 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
         
         # Force status to DRAFT
         validated_data['status'] = Invoice.STATUS_DRAFT
+        validated_data['facture'] = Invoice.get_next_facture_number()
         
         invoice = Invoice.objects.create(**validated_data)
         

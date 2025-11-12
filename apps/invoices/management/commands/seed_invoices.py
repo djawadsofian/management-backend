@@ -64,7 +64,7 @@ class Command(BaseCommand):
                     bon_de_commande = f"BC{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
                     bon_de_versement = f"BV{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
                     bon_de_reception = f"BR{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
-                    facture = f"FAC{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
+                    # facture = f"FAC{random.randint(1000, 9999)}/{year_suffix}" if random.choice([True, False]) else None
                     
                     # Generate dates
                     issued_date = fake.date_between(start_date='-1y', end_date='today')
@@ -80,7 +80,7 @@ class Command(BaseCommand):
                         bon_de_commande=bon_de_commande,
                         bon_de_versement=bon_de_versement,
                         bon_de_reception=bon_de_reception,
-                        facture=facture,
+                        facture=None,
                         due_date=due_date,
                         tva=tva,
                         deposit_price=Decimal(str(round(random.uniform(0, 500), 2))),

@@ -144,6 +144,36 @@ class Invoice(TimeStampedModel):
     def stock_is_affected(self):
         """Check if stock is currently affected by this invoice"""
         return self.status in [self.STATUS_ISSUED, self.STATUS_PAID]
+    
+
+    @classmethod
+    def get_next_facture_number(cls):
+        """
+        Generate next facture number in format: YYYYMM-NN
+        where NN is sequential for the current month
+        """
+        from django.utils import timezone
+        
+        now = timezone.now()
+        year_month = now.strftime("%Y%m")  # e.g., "202511"
+        
+        # Get the highest facture number for current month
+        latest_facture = cls.objects.filter(
+            facture__startswith=year_month
+        ).exclude(facture__isnull=True).exclude(facture__exact='').order_by('-facture').first()
+        
+        if latest_facture and latest_facture.facture:
+            try:
+                # Extract the sequence number and increment
+                current_seq = int(latest_facture.facture.split('-')[1])
+                next_seq = current_seq + 1
+            except (IndexError, ValueError):
+                next_seq = 1
+        else:
+            next_seq = 1
+        
+        # Format with leading zeros: 01, 02, etc.
+        return f"{year_month}-{next_seq:02d}"
 
     # Financial Calculations
     def calculate_totals(self):
