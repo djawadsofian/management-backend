@@ -63,7 +63,7 @@ class Invoice(TimeStampedModel):
     tva = models.DecimalField(
         max_digits=5,
         decimal_places=2,
-        default=Decimal('19.00'),  # Default 19% TVA in Algeria
+        default=Decimal('00.00'),  # Default 19% TVA in Algeria
         validators=[
             MinValueValidator(Decimal('0.00')),
             MaxValueValidator(Decimal('100.00'))
