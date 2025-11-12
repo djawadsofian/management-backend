@@ -237,27 +237,27 @@ def my_calendar(request):
         # Maintenance events
         if event_type in ['all', 'maintenance']:
             for maintenance in project.maintenances.all():
-                if maintenance.next_maintenance_date:
-                    # Apply overdue filter if specified
-                    if is_overdue.lower() == 'true' and not maintenance.is_overdue:
-                        continue
-                    elif is_overdue.lower() == 'false' and maintenance.is_overdue:
-                        continue
-                    
-                    events.append({
-                        'id': f'maintenance-{maintenance.id}',
-                        'title': f'Maintenance: {project.name}',
-                        'start': maintenance.next_maintenance_date.isoformat(),
-                        'type': 'maintenance',
-                        'project_id': project.id,
-                        'project_name': project.name,
-                        'client_name': project.client.name,
-                        'client_address': client_address,
-                        'maintenance_id': maintenance.id,
-                        'duration': maintenance.duration,
-                        'interval': maintenance.interval,
-                        'is_overdue': maintenance.is_overdue,
-                    })
+                # Apply overdue filter if specified
+                if is_overdue.lower() == 'true' and not maintenance.is_overdue:
+                    continue
+                elif is_overdue.lower() == 'false' and maintenance.is_overdue:
+                    continue
+                
+                events.append({
+                    'id': f'maintenance-{maintenance.id}',
+                    'title': f'Maintenance #{maintenance.maintenance_number}: {project.name}',
+                    'start': maintenance.start_date.isoformat(),
+                    'end': maintenance.end_date.isoformat(),
+                    'type': 'maintenance',
+                    'project_id': project.id,
+                    'project_name': project.name,
+                    'client_name': project.client.name,
+                    'client_address': client_address,
+                    'maintenance_id': maintenance.id,
+                    'maintenance_number': maintenance.maintenance_number,
+                    'is_overdue': maintenance.is_overdue,
+                    'days_until_maintenance': maintenance.days_until_maintenance,
+                })
     
     # Apply date range filters
     if start_date:

@@ -53,7 +53,11 @@ class DashboardSummaryView(APIView):
             completed=Count('id', filter=Q(end_date__lt=today)),
             without_end_date=Count('id', filter=Q(end_date__isnull=True)),
             verified=Count('id', filter=Q(is_verified=True)),
-            unverified=Count('id', filter=Q(is_verified=False))
+            unverified=Count('id', filter=Q(is_verified=False)),
+            with_maintenance=Count('id', filter=Q(
+                duration_maintenance__isnull=False,
+                interval_maintenance__isnull=False
+            ))
         )
         
         # ===== FINANCIAL STATISTICS (Single Query) =====
@@ -153,13 +157,13 @@ class DashboardSummaryView(APIView):
         # ===== MAINTENANCE ALERTS (Single Query) =====
         maintenance_stats = Maintenance.objects.aggregate(
             total_maintenances=Count('id'),
-            overdue=Count('id', filter=Q(next_maintenance_date__lt=today)),
+            overdue=Count('id', filter=Q(start_date__lt=today)),
             due_soon=Count('id', filter=Q(
-                next_maintenance_date__gte=today,
-                next_maintenance_date__lte=today + timedelta(days=7)
+                start_date__gte=today,
+                start_date__lte=today + timedelta(days=7)
             )),
             upcoming=Count('id', filter=Q(
-                next_maintenance_date__gt=today + timedelta(days=7)
+                start_date__gt=today + timedelta(days=7)
             ))
         )
         
@@ -177,6 +181,7 @@ class DashboardSummaryView(APIView):
                 'without_end_date': project_stats['without_end_date'],
                 'verified': project_stats['verified'],
                 'unverified': project_stats['unverified'],
+                'with_maintenance': project_stats['with_maintenance'],
                 'verification_rate': round(
                     (project_stats['verified'] / project_stats['total'] * 100) 
                     if project_stats['total'] > 0 else 0, 
@@ -268,7 +273,12 @@ class DashboardSummaryView(APIView):
                     if project_stats['total'] > 0 else 0,
                     1
                 ),
-                'stock_turnover_risk': inventory_stats['out_of_stock'] + inventory_stats['low_stock']
+                'stock_turnover_risk': inventory_stats['out_of_stock'] + inventory_stats['low_stock'],
+                'maintenance_coverage': round(
+                    (project_stats['with_maintenance'] / project_stats['total'] * 100)
+                    if project_stats['total'] > 0 else 0,
+                    1
+                )
             }
         }
         
@@ -302,7 +312,10 @@ class ProjectAnalyticsView(APIView):
         }).values('month').annotate(
             created=Count('id'),
             verified=Count('id', filter=Q(is_verified=True)),
-            with_maintenance=Count('id', filter=Q(maintenances__isnull=False), distinct=True)
+            with_maintenance=Count('id', filter=Q(
+                duration_maintenance__isnull=False,
+                interval_maintenance__isnull=False
+            ))
         ).order_by('month')
         
         # ===== PROJECT DURATION ANALYSIS =====
@@ -320,6 +333,21 @@ class ProjectAnalyticsView(APIView):
             long_duration=Count('id', filter=Q(duration_days__gt=90))
         )
         
+        # ===== MAINTENANCE COVERAGE =====
+        maintenance_coverage = Project.objects.aggregate(
+            total_projects=Count('id'),
+            with_maintenance=Count('id', filter=Q(
+                duration_maintenance__isnull=False,
+                interval_maintenance__isnull=False
+            )),
+            avg_maintenance_duration=Avg('duration_maintenance', filter=Q(
+                duration_maintenance__isnull=False
+            )),
+            avg_maintenance_interval=Avg('interval_maintenance', filter=Q(
+                interval_maintenance__isnull=False
+            ))
+        )
+        
         # ===== TOP CLIENTS BY PROJECT COUNT =====
         top_clients = Client.objects.annotate(
             project_count=Count('projects'),
@@ -329,6 +357,10 @@ class ProjectAnalyticsView(APIView):
             )),
             completed_projects=Count('projects', filter=Q(
                 projects__end_date__lt=today
+            )),
+            projects_with_maintenance=Count('projects', filter=Q(
+                projects__duration_maintenance__isnull=False,
+                projects__interval_maintenance__isnull=False
             ))
         ).filter(project_count__gt=0).order_by('-project_count')[:10]
         
@@ -339,7 +371,8 @@ class ProjectAnalyticsView(APIView):
                 'is_corporate': client.is_corporate,
                 'total_projects': client.project_count,
                 'active_projects': client.active_projects,
-                'completed_projects': client.completed_projects
+                'completed_projects': client.completed_projects,
+                'projects_with_maintenance': client.projects_with_maintenance
             }
             for client in top_clients
         ]
@@ -352,6 +385,10 @@ class ProjectAnalyticsView(APIView):
             active_projects=Count('assigned_projects', filter=Q(
                 assigned_projects__start_date__lte=today,
                 assigned_projects__end_date__gte=today
+            )),
+            projects_with_maintenance=Count('assigned_projects', filter=Q(
+                assigned_projects__duration_maintenance__isnull=False,
+                assigned_projects__interval_maintenance__isnull=False
             ))
         ).order_by('-total_projects')[:10]
         
@@ -361,6 +398,7 @@ class ProjectAnalyticsView(APIView):
                 'employer_name': emp.get_full_name() or emp.username,
                 'total_projects': emp.total_projects,
                 'active_projects': emp.active_projects,
+                'projects_with_maintenance': emp.projects_with_maintenance,
                 'workload_status': 'High' if emp.active_projects > 5 else 'Medium' if emp.active_projects > 2 else 'Low'
             }
             for emp in employer_workload
@@ -374,6 +412,17 @@ class ProjectAnalyticsView(APIView):
                 'short_term': duration_stats['min_duration'],  # <= 30 days
                 'medium_term': duration_stats['medium_duration'],  # 31-90 days
                 'long_term': duration_stats['long_duration']  # > 90 days
+            },
+            'maintenance_coverage': {
+                'total_projects': maintenance_coverage['total_projects'],
+                'with_maintenance': maintenance_coverage['with_maintenance'],
+                'coverage_rate': round(
+                    (maintenance_coverage['with_maintenance'] / maintenance_coverage['total_projects'] * 100)
+                    if maintenance_coverage['total_projects'] > 0 else 0,
+                    1
+                ),
+                'avg_duration_months': round(maintenance_coverage['avg_maintenance_duration'] or 0, 1),
+                'avg_interval_months': round(maintenance_coverage['avg_maintenance_interval'] or 0, 1)
             },
             'top_clients': top_clients_data,
             'employer_workload': workload_data
@@ -427,7 +476,11 @@ class FinancialAnalyticsView(APIView):
                 filter=Q(projects__invoices__status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID])
             ),
             invoice_count=Count('projects__invoices', distinct=True),
-            project_count=Count('projects', distinct=True)
+            project_count=Count('projects', distinct=True),
+            projects_with_maintenance=Count('projects', filter=Q(
+                projects__duration_maintenance__isnull=False,
+                projects__interval_maintenance__isnull=False
+            ))
         ).filter(total_revenue__gt=0).order_by('-total_revenue')[:10]
         
         top_revenue_data = [
@@ -437,6 +490,7 @@ class FinancialAnalyticsView(APIView):
                 'total_revenue': float(client.total_revenue or 0),
                 'invoice_count': client.invoice_count,
                 'project_count': client.project_count,
+                'projects_with_maintenance': client.projects_with_maintenance,
                 'avg_revenue_per_project': round(
                     float(client.total_revenue or 0) / client.project_count
                     if client.project_count > 0 else 0,
@@ -673,6 +727,10 @@ class RecentActivityView(APIView):
         
         recent_clients = Client.objects.order_by('-created_at')[:limit]
         
+        recent_maintenances = Maintenance.objects.select_related(
+            'project', 'project__client'
+        ).order_by('-created_at')[:limit]
+        
         # Build activity feed
         activities = []
         
@@ -685,6 +743,7 @@ class RecentActivityView(APIView):
                 'description': f"Client: {project.client.name}",
                 'status': project.status,
                 'is_verified': project.is_verified,
+                'has_maintenance': project.duration_maintenance is not None and project.interval_maintenance is not None,
                 'timestamp': project.created_at.isoformat(),
                 'user': project.created_by.get_full_name() if project.created_by else 'System'
             })
@@ -710,6 +769,19 @@ class RecentActivityView(APIView):
                 'title': f"Client: {client.name}",
                 'description': f"Type: {'Corporate' if client.is_corporate else 'Individual'}",
                 'timestamp': client.created_at.isoformat()
+            })
+        
+        # Maintenances
+        for maintenance in recent_maintenances:
+            activities.append({
+                'type': 'maintenance',
+                'id': maintenance.id,
+                'title': f"Maintenance #{maintenance.maintenance_number}: {maintenance.project.name}",
+                'description': f"Project: {maintenance.project.name}",
+                'start_date': maintenance.start_date.isoformat(),
+                'end_date': maintenance.end_date.isoformat(),
+                'maintenance_number': maintenance.maintenance_number,
+                'timestamp': maintenance.created_at.isoformat()
             })
         
         # Sort all activities by timestamp
