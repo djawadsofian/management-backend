@@ -176,3 +176,10 @@ DJOSER = {
         'current_user': 'apps.users.serializers.UserSerializer',
     },
 }
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+    }
+}

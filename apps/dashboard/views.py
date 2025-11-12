@@ -1,10 +1,20 @@
-# dashboard/views.py
-from rest_framework.decorators import api_view, permission_classes
+# apps/dashboard/views.py
+"""
+Optimized Dashboard Views with Aggregation Queries
+- Prevents N+1 queries
+- Uses database aggregation for performance
+- Cached responses for expensive queries
+- Professional statistics organization
+"""
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
-from django.db.models import Count, Sum, Q, F
+from django.db.models import (
+    Count, Sum, Avg, Q, F, DecimalField, 
+    Case, When, IntegerField, ExpressionWrapper
+)
 from django.utils import timezone
+from django.core.cache import cache
 from datetime import timedelta, datetime
 from decimal import Decimal
 
@@ -14,375 +24,699 @@ from apps.stock.models import Product
 from apps.clients.models import Client
 from apps.users.models import CustomUser
 
+
 class DashboardSummaryView(APIView):
+    """
+    Main dashboard summary with key metrics
+    Optimized with single-query aggregations
+    """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """
-        Get overall dashboard summary statistics
-        """
-        # Projects statistics
-        total_projects = Project.objects.count()
-        active_projects = Project.objects.filter(
-            start_date__lte=timezone.now().date(),
-            end_date__gte=timezone.now().date()
-        ).count()
+        # Check cache first (5 minutes)
+        cache_key = 'dashboard_summary'
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            cached_data['from_cache'] = True
+            return Response(cached_data)
         
-        upcoming_projects = Project.objects.filter(
-            start_date__gt=timezone.now().date()
-        ).count()
+        today = timezone.now().date()
         
-        completed_projects = Project.objects.filter(
-            end_date__lt=timezone.now().date()
-        ).count()
-
-        # Revenue statistics
-        revenue_data = Invoice.objects.filter(
-            status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID]
-        ).aggregate(
-            total_revenue=Sum('total'),
+        # ===== PROJECT STATISTICS (Single Query) =====
+        project_stats = Project.objects.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(
+                start_date__lte=today,
+                end_date__gte=today
+            )),
+            upcoming=Count('id', filter=Q(start_date__gt=today)),
+            completed=Count('id', filter=Q(end_date__lt=today)),
+            without_end_date=Count('id', filter=Q(end_date__isnull=True)),
+            verified=Count('id', filter=Q(is_verified=True)),
+            unverified=Count('id', filter=Q(is_verified=False))
+        )
+        
+        # ===== FINANCIAL STATISTICS (Single Query) =====
+        financial_stats = Invoice.objects.aggregate(
+            # Revenue metrics
+            total_revenue=Sum('total', filter=Q(
+                status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID]
+            )),
             paid_revenue=Sum('total', filter=Q(status=Invoice.STATUS_PAID)),
-            total_invoices=Count('id')
+            pending_revenue=Sum('total', filter=Q(status=Invoice.STATUS_ISSUED)),
+            draft_value=Sum('total', filter=Q(status=Invoice.STATUS_DRAFT)),
+            
+            # Invoice counts
+            total_invoices=Count('id'),
+            draft_invoices=Count('id', filter=Q(status=Invoice.STATUS_DRAFT)),
+            issued_invoices=Count('id', filter=Q(status=Invoice.STATUS_ISSUED)),
+            paid_invoices=Count('id', filter=Q(status=Invoice.STATUS_PAID)),
+            
+            # Average metrics
+            avg_invoice_value=Avg('total', filter=Q(
+                status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID]
+            )),
+            
+            # Overdue invoices (issued but past due_date)
+            overdue_invoices=Count('id', filter=Q(
+                status=Invoice.STATUS_ISSUED,
+                due_date__lt=today
+            )),
+            overdue_amount=Sum('total', filter=Q(
+                status=Invoice.STATUS_ISSUED,
+                due_date__lt=today
+            ))
         )
-
-        # Stock statistics
-        low_stock_products = Product.objects.filter(
-            quantity__lte=F('reorder_threshold')
-        )
-        low_stock_count = low_stock_products.count()
         
-        out_of_stock_count = Product.objects.filter(quantity=0).count()
-        total_products = Product.objects.count()
-
-        # Client statistics
-        total_clients = Client.objects.count()
-        corporate_clients = Client.objects.filter(is_corporate=True).count()
-
-        # User statistics
-        total_employers = CustomUser.objects.filter(role=CustomUser.ROLE_EMPLOYER).count()
-        total_assistants = CustomUser.objects.filter(role=CustomUser.ROLE_ASSISTANT).count()
-
-        return Response({
+        # ===== INVENTORY STATISTICS (Single Query) =====
+        inventory_stats = Product.objects.aggregate(
+            total_products=Count('id'),
+            out_of_stock=Count('id', filter=Q(quantity=0)),
+            low_stock=Count('id', filter=Q(
+                quantity__gt=0,
+                quantity__lte=F('reorder_threshold')
+            )),
+            healthy_stock=Count('id', filter=Q(quantity__gt=F('reorder_threshold'))),
+            
+            # Financial inventory metrics
+            total_stock_value=Sum(
+                ExpressionWrapper(
+                    F('quantity') * F('buying_price'),
+                    output_field=DecimalField(max_digits=15, decimal_places=2)
+                )
+            ),
+            potential_revenue=Sum(
+                ExpressionWrapper(
+                    F('quantity') * F('selling_price'),
+                    output_field=DecimalField(max_digits=15, decimal_places=2)
+                )
+            ),
+            avg_profit_margin=Avg(
+                ExpressionWrapper(
+                    ((F('selling_price') - F('buying_price')) / F('buying_price')) * 100,
+                    output_field=DecimalField(max_digits=5, decimal_places=2)
+                ),
+                filter=Q(buying_price__gt=0)
+            )
+        )
+        
+        # Calculate potential profit
+        stock_value = inventory_stats['total_stock_value'] or Decimal('0')
+        potential_revenue = inventory_stats['potential_revenue'] or Decimal('0')
+        potential_profit = potential_revenue - stock_value
+        
+        # ===== CLIENT STATISTICS (Single Query) =====
+        client_stats = Client.objects.aggregate(
+            total=Count('id'),
+            corporate=Count('id', filter=Q(is_corporate=True)),
+            individual=Count('id', filter=Q(is_corporate=False)),
+            # Clients with active projects
+            active_clients=Count(
+                'id',
+                filter=Q(
+                    projects__start_date__lte=today,
+                    projects__end_date__gte=today
+                ),
+                distinct=True
+            )
+        )
+        
+        # ===== USER STATISTICS (Single Query) =====
+        user_stats = CustomUser.objects.aggregate(
+            total_users=Count('id'),
+            admins=Count('id', filter=Q(role=CustomUser.ROLE_ADMIN)),
+            employers=Count('id', filter=Q(role=CustomUser.ROLE_EMPLOYER)),
+            assistants=Count('id', filter=Q(role=CustomUser.ROLE_ASSISTANT)),
+            active_users=Count('id', filter=Q(is_active=True))
+        )
+        
+        # ===== MAINTENANCE ALERTS (Single Query) =====
+        maintenance_stats = Maintenance.objects.aggregate(
+            total_maintenances=Count('id'),
+            overdue=Count('id', filter=Q(next_maintenance_date__lt=today)),
+            due_soon=Count('id', filter=Q(
+                next_maintenance_date__gte=today,
+                next_maintenance_date__lte=today + timedelta(days=7)
+            )),
+            upcoming=Count('id', filter=Q(
+                next_maintenance_date__gt=today + timedelta(days=7)
+            ))
+        )
+        
+        # ===== BUILD RESPONSE =====
+        response_data = {
+            'generated_at': timezone.now().isoformat(),
+            'user_role': request.user.role,
+            
+            # Project Overview
             'projects': {
-                'total': total_projects,
-                'active': active_projects,
-                'upcoming': upcoming_projects,
-                'completed': completed_projects,
-                'verified': Project.objects.filter(is_verified=True).count(),
+                'total': project_stats['total'],
+                'active': project_stats['active'],
+                'upcoming': project_stats['upcoming'],
+                'completed': project_stats['completed'],
+                'without_end_date': project_stats['without_end_date'],
+                'verified': project_stats['verified'],
+                'unverified': project_stats['unverified'],
+                'verification_rate': round(
+                    (project_stats['verified'] / project_stats['total'] * 100) 
+                    if project_stats['total'] > 0 else 0, 
+                    1
+                )
             },
-            'revenue': {
-                'total': revenue_data['total_revenue'] or Decimal('0.00'),
-                'paid': revenue_data['paid_revenue'] or Decimal('0.00'),
-                'pending': revenue_data['total_revenue'] - revenue_data['paid_revenue'] if revenue_data['total_revenue'] else Decimal('0.00'),
-                'invoice_count': revenue_data['total_invoices'] or 0,
+            
+            # Financial Overview
+            'financial': {
+                'total_revenue': float(financial_stats['total_revenue'] or 0),
+                'paid_revenue': float(financial_stats['paid_revenue'] or 0),
+                'pending_revenue': float(financial_stats['pending_revenue'] or 0),
+                'draft_value': float(financial_stats['draft_value'] or 0),
+                'overdue_amount': float(financial_stats['overdue_amount'] or 0),
+                'avg_invoice_value': float(financial_stats['avg_invoice_value'] or 0),
+                'total_invoices': financial_stats['total_invoices'],
+                'draft_invoices': financial_stats['draft_invoices'],
+                'issued_invoices': financial_stats['issued_invoices'],
+                'paid_invoices': financial_stats['paid_invoices'],
+                'overdue_invoices': financial_stats['overdue_invoices'],
+                'collection_rate': round(
+                    (financial_stats['paid_revenue'] / financial_stats['total_revenue'] * 100)
+                    if financial_stats['total_revenue'] else 0,
+                    1
+                )
             },
+            
+            # Inventory Overview
             'inventory': {
-                'total_products': total_products,
-                'low_stock': low_stock_count,
-                'out_of_stock': out_of_stock_count,
-                'healthy_stock': total_products - low_stock_count - out_of_stock_count,
+                'total_products': inventory_stats['total_products'],
+                'out_of_stock': inventory_stats['out_of_stock'],
+                'low_stock': inventory_stats['low_stock'],
+                'healthy_stock': inventory_stats['healthy_stock'],
+                'total_stock_value': float(stock_value),
+                'potential_revenue': float(potential_revenue),
+                'potential_profit': float(potential_profit),
+                'avg_profit_margin': float(inventory_stats['avg_profit_margin'] or 0),
+                'stock_health_percentage': round(
+                    (inventory_stats['healthy_stock'] / inventory_stats['total_products'] * 100)
+                    if inventory_stats['total_products'] > 0 else 0,
+                    1
+                )
             },
+            
+            # Client Overview
             'clients': {
-                'total': total_clients,
-                'corporate': corporate_clients,
-                'individual': total_clients - corporate_clients,
+                'total': client_stats['total'],
+                'corporate': client_stats['corporate'],
+                'individual': client_stats['individual'],
+                'active_clients': client_stats['active_clients'],
+                'corporate_percentage': round(
+                    (client_stats['corporate'] / client_stats['total'] * 100)
+                    if client_stats['total'] > 0 else 0,
+                    1
+                )
             },
+            
+            # Team Overview
             'team': {
-                'employers': total_employers,
-                'assistants': total_assistants,
-                'admins': CustomUser.objects.filter(role=CustomUser.ROLE_ADMIN).count(),
+                'total_users': user_stats['total_users'],
+                'admins': user_stats['admins'],
+                'employers': user_stats['employers'],
+                'assistants': user_stats['assistants'],
+                'active_users': user_stats['active_users']
+            },
+            
+            # Maintenance Alerts
+            'maintenance': {
+                'total': maintenance_stats['total_maintenances'],
+                'overdue': maintenance_stats['overdue'],
+                'due_soon': maintenance_stats['due_soon'],
+                'upcoming': maintenance_stats['upcoming']
+            },
+            
+            # Key Performance Indicators
+            'kpis': {
+                'revenue_per_project': round(
+                    float(financial_stats['total_revenue'] or 0) / project_stats['total']
+                    if project_stats['total'] > 0 else 0,
+                    2
+                ),
+                'revenue_per_client': round(
+                    float(financial_stats['total_revenue'] or 0) / client_stats['total']
+                    if client_stats['total'] > 0 else 0,
+                    2
+                ),
+                'project_completion_rate': round(
+                    (project_stats['completed'] / project_stats['total'] * 100)
+                    if project_stats['total'] > 0 else 0,
+                    1
+                ),
+                'stock_turnover_risk': inventory_stats['out_of_stock'] + inventory_stats['low_stock']
             }
-        })
-    
+        }
+        
+        # Cache for 5 minutes
+        cache.set(cache_key, response_data, 300)
+        response_data['from_cache'] = False
+        
+        return Response(response_data)
 
 
 class ProjectAnalyticsView(APIView):
+    """
+    Detailed project analytics with trends
+    """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """
-        Get project analytics and timeline data
-        """
-        # Project status distribution
-        today = timezone.now().date()
+        cache_key = 'project_analytics'
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
         
-        status_breakdown = {
-            'active': Project.objects.filter(
-                start_date__lte=today,
-                end_date__gte=today
-            ).count(),
-            'upcoming': Project.objects.filter(
-                start_date__gt=today
-            ).count(),
-            'completed': Project.objects.filter(
-                end_date__lt=today
-            ).count(),
-            'without_end_date': Project.objects.filter(
-                end_date__isnull=True
-            ).count(),
-        }
-
-        # Projects by month (last 6 months)
+        today = timezone.now().date()
         six_months_ago = today - timedelta(days=180)
         
-        monthly_projects = Project.objects.filter(
+        # ===== PROJECT TIMELINE ANALYSIS =====
+        timeline_stats = Project.objects.filter(
             created_at__date__gte=six_months_ago
         ).extra({
             'month': "strftime('%%Y-%%m', created_at)"
         }).values('month').annotate(
-            count=Count('id')
+            created=Count('id'),
+            verified=Count('id', filter=Q(is_verified=True)),
+            with_maintenance=Count('id', filter=Q(maintenances__isnull=False), distinct=True)
         ).order_by('month')
-
-        # Projects verification rate
-        total_projects = Project.objects.count()
-        verified_projects = Project.objects.filter(is_verified=True).count()
-        verification_rate = (verified_projects / total_projects * 100) if total_projects > 0 else 0
-
-        # Recent projects (last 10)
-        recent_projects = Project.objects.select_related('client').order_by('-created_at')[:10]
-        recent_projects_data = [
+        
+        # ===== PROJECT DURATION ANALYSIS =====
+        duration_stats = Project.objects.filter(
+            end_date__isnull=False
+        ).annotate(
+            duration_days=ExpressionWrapper(
+                F('end_date') - F('start_date'),
+                output_field=IntegerField()
+            )
+        ).aggregate(
+            avg_duration=Avg('duration_days'),
+            min_duration=Count('id', filter=Q(duration_days__lte=30)),
+            medium_duration=Count('id', filter=Q(duration_days__gt=30, duration_days__lte=90)),
+            long_duration=Count('id', filter=Q(duration_days__gt=90))
+        )
+        
+        # ===== TOP CLIENTS BY PROJECT COUNT =====
+        top_clients = Client.objects.annotate(
+            project_count=Count('projects'),
+            active_projects=Count('projects', filter=Q(
+                projects__start_date__lte=today,
+                projects__end_date__gte=today
+            )),
+            completed_projects=Count('projects', filter=Q(
+                projects__end_date__lt=today
+            ))
+        ).filter(project_count__gt=0).order_by('-project_count')[:10]
+        
+        top_clients_data = [
             {
-                'id': project.id,
-                'name': project.name,
-                'client': project.client.name,
-                'start_date': project.start_date,
-                'status': project.status,
-                'is_verified': project.is_verified,
-                'created_at': project.created_at
+                'client_id': client.id,
+                'client_name': client.name,
+                'is_corporate': client.is_corporate,
+                'total_projects': client.project_count,
+                'active_projects': client.active_projects,
+                'completed_projects': client.completed_projects
             }
-            for project in recent_projects
+            for client in top_clients
         ]
+        
+        # ===== EMPLOYER WORKLOAD =====
+        employer_workload = CustomUser.objects.filter(
+            role=CustomUser.ROLE_EMPLOYER
+        ).annotate(
+            total_projects=Count('assigned_projects'),
+            active_projects=Count('assigned_projects', filter=Q(
+                assigned_projects__start_date__lte=today,
+                assigned_projects__end_date__gte=today
+            ))
+        ).order_by('-total_projects')[:10]
+        
+        workload_data = [
+            {
+                'employer_id': emp.id,
+                'employer_name': emp.get_full_name() or emp.username,
+                'total_projects': emp.total_projects,
+                'active_projects': emp.active_projects,
+                'workload_status': 'High' if emp.active_projects > 5 else 'Medium' if emp.active_projects > 2 else 'Low'
+            }
+            for emp in employer_workload
+        ]
+        
+        response_data = {
+            'generated_at': timezone.now().isoformat(),
+            'monthly_trend': list(timeline_stats),
+            'duration_analysis': {
+                'avg_duration_days': round(duration_stats['avg_duration'] or 0, 1),
+                'short_term': duration_stats['min_duration'],  # <= 30 days
+                'medium_term': duration_stats['medium_duration'],  # 31-90 days
+                'long_term': duration_stats['long_duration']  # > 90 days
+            },
+            'top_clients': top_clients_data,
+            'employer_workload': workload_data
+        }
+        
+        cache.set(cache_key, response_data, 600)  # 10 minutes
+        return Response(response_data)
 
-        return Response({
-            'status_breakdown': status_breakdown,
-            'monthly_trend': list(monthly_projects),
-            'verification_rate': round(verification_rate, 2),
-            'recent_projects': recent_projects_data,
-        })
-    
 
-
-
-# dashboard/views.py (continued)
 class FinancialAnalyticsView(APIView):
+    """
+    Financial analytics with revenue tracking
+    """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """
-        Get financial analytics and revenue data
-        """
-        # Date range parameters
-        range_param = request.GET.get('range', 'month')  # week, month, year
+        # Get date range from params
+        range_param = request.GET.get('range', 'month')
         today = timezone.now().date()
         
         if range_param == 'week':
             start_date = today - timedelta(days=7)
-        elif range_param == 'month':
-            start_date = today - timedelta(days=30)
-        else:  # year
+            cache_key = 'financial_analytics_week'
+        elif range_param == 'year':
             start_date = today - timedelta(days=365)
-
-        # Revenue by status
-        revenue_by_status = Invoice.objects.filter(
-            issued_date__gte=start_date
-        ).values('status').annotate(
-            total=Sum('total'),
-            count=Count('id')
-        ).order_by('status')
-
-        # Monthly revenue trend
-        monthly_revenue = Invoice.objects.filter(
+            cache_key = 'financial_analytics_year'
+        else:
+            start_date = today - timedelta(days=30)
+            cache_key = 'financial_analytics_month'
+        
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
+        
+        # ===== REVENUE TREND =====
+        revenue_trend = Invoice.objects.filter(
             issued_date__gte=start_date,
             status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID]
         ).extra({
-            'month': "strftime('%%Y-%%m', issued_date)"
-        }).values('month').annotate(
-            revenue=Sum('total')
-        ).order_by('month')
-
-        # Top clients by revenue
-        top_clients = Invoice.objects.filter(
-            status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID]
-        ).values(
-            'project__client__name'
-        ).annotate(
-            total_revenue=Sum('total'),
-            project_count=Count('project__id')
-        ).order_by('-total_revenue')[:10]
-
-        # Invoice status distribution
-        invoice_status = Invoice.objects.values('status').annotate(
-            count=Count('id')
-        ).order_by('status')
-
-        return Response({
-            'revenue_by_status': list(revenue_by_status),
-            'monthly_revenue_trend': list(monthly_revenue),
-            'top_clients': list(top_clients),
-            'invoice_status_distribution': list(invoice_status),
-            'date_range': {
-                'start': start_date,
-                'end': today,
-                'range': range_param
+            'date': "DATE(issued_date)"
+        }).values('date').annotate(
+            revenue=Sum('total'),
+            invoice_count=Count('id'),
+            paid_count=Count('id', filter=Q(status=Invoice.STATUS_PAID))
+        ).order_by('date')
+        
+        # ===== TOP REVENUE CLIENTS =====
+        top_revenue_clients = Client.objects.annotate(
+            total_revenue=Sum(
+                'projects__invoices__total',
+                filter=Q(projects__invoices__status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID])
+            ),
+            invoice_count=Count('projects__invoices', distinct=True),
+            project_count=Count('projects', distinct=True)
+        ).filter(total_revenue__gt=0).order_by('-total_revenue')[:10]
+        
+        top_revenue_data = [
+            {
+                'client_id': client.id,
+                'client_name': client.name,
+                'total_revenue': float(client.total_revenue or 0),
+                'invoice_count': client.invoice_count,
+                'project_count': client.project_count,
+                'avg_revenue_per_project': round(
+                    float(client.total_revenue or 0) / client.project_count
+                    if client.project_count > 0 else 0,
+                    2
+                )
             }
-        })
-    
-
+            for client in top_revenue_clients
+        ]
+        
+        # ===== PAYMENT STATUS ANALYSIS =====
+        payment_stats = Invoice.objects.filter(
+            issued_date__gte=start_date
+        ).aggregate(
+            total_issued=Sum('total', filter=Q(status=Invoice.STATUS_ISSUED)),
+            total_paid=Sum('total', filter=Q(status=Invoice.STATUS_PAID)),
+            avg_days_to_payment=Avg(
+                ExpressionWrapper(
+                    F('updated_at') - F('created_at'),
+                    output_field=IntegerField()
+                ),
+                filter=Q(status=Invoice.STATUS_PAID)
+            )
+        )
+        
+        # ===== INVOICE AGING ANALYSIS =====
+        aging_analysis = Invoice.objects.filter(
+            status=Invoice.STATUS_ISSUED
+        ).aggregate(
+            current=Count('id', filter=Q(due_date__gte=today)),
+            overdue_1_30=Count('id', filter=Q(
+                due_date__lt=today,
+                due_date__gte=today - timedelta(days=30)
+            )),
+            overdue_31_60=Count('id', filter=Q(
+                due_date__lt=today - timedelta(days=30),
+                due_date__gte=today - timedelta(days=60)
+            )),
+            overdue_60_plus=Count('id', filter=Q(
+                due_date__lt=today - timedelta(days=60)
+            )),
+            current_amount=Sum('total', filter=Q(due_date__gte=today)),
+            overdue_amount=Sum('total', filter=Q(due_date__lt=today))
+        )
+        
+        response_data = {
+            'generated_at': timezone.now().isoformat(),
+            'date_range': {
+                'start': start_date.isoformat(),
+                'end': today.isoformat(),
+                'range': range_param
+            },
+            'revenue_trend': list(revenue_trend),
+            'top_revenue_clients': top_revenue_data,
+            'payment_metrics': {
+                'total_issued': float(payment_stats['total_issued'] or 0),
+                'total_paid': float(payment_stats['total_paid'] or 0),
+                'payment_rate': round(
+                    (payment_stats['total_paid'] / payment_stats['total_issued'] * 100)
+                    if payment_stats['total_issued'] else 0,
+                    1
+                )
+            },
+            'aging_analysis': {
+                'current': {
+                    'count': aging_analysis['current'],
+                    'amount': float(aging_analysis['current_amount'] or 0)
+                },
+                'overdue_1_30_days': aging_analysis['overdue_1_30'],
+                'overdue_31_60_days': aging_analysis['overdue_31_60'],
+                'overdue_60_plus_days': aging_analysis['overdue_60_plus'],
+                'total_overdue_amount': float(aging_analysis['overdue_amount'] or 0)
+            }
+        }
+        
+        cache.set(cache_key, response_data, 300)  # 5 minutes
+        return Response(response_data)
 
 
 class InventoryAnalyticsView(APIView):
+    """
+    Inventory analytics with stock health
+    """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """
-        Get inventory and stock analytics
-        """
-        # Low stock alerts
-        low_stock_products = Product.objects.filter(
-            quantity__lte=F('reorder_threshold')
-        ).order_by('quantity')[:10]
+        cache_key = 'inventory_analytics'
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
         
-        low_stock_data = [
-            {
-                'id': product.id,
-                'name': product.name,
-                'sku': product.sku,
-                'quantity': product.quantity,
-                'reorder_threshold': product.reorder_threshold,
-                'unit': product.unit,
-                'is_out_of_stock': product.quantity == 0
-            }
-            for product in low_stock_products
-        ]
-
-        # Stock value calculation
-        stock_value = Product.objects.aggregate(
-            total_value=Sum(F('quantity') * F('buying_price'))
-        )['total_value'] or Decimal('0.00')
-
-        # Products with highest profit margin
-        profitable_products = Product.objects.filter(
-            selling_price__gt=0,
-            buying_price__gt=0
+        # ===== CRITICAL STOCK ALERTS =====
+        critical_stock = Product.objects.filter(
+            Q(quantity=0) | Q(quantity__lte=F('reorder_threshold'))
         ).annotate(
-            profit_margin=((F('selling_price') - F('buying_price')) / F('buying_price')) * 100
-        ).order_by('-profit_margin')[:10]
-
-        profitable_products_data = [
+            stock_status=Case(
+                When(quantity=0, then='OUT_OF_STOCK'),
+                default='LOW_STOCK'
+            ),
+            potential_loss=ExpressionWrapper(
+                F('reorder_threshold') * F('selling_price'),
+                output_field=DecimalField(max_digits=12, decimal_places=2)
+            )
+        ).order_by('quantity', '-potential_loss')[:20]
+        
+        critical_data = [
             {
-                'id': product.id,
-                'name': product.name,
-                'buying_price': float(product.buying_price),
-                'selling_price': float(product.selling_price),
-                'profit_margin': float(product.profit_margin),
-                'quantity': product.quantity
+                'product_id': p.id,
+                'name': p.name,
+                'sku': p.sku,
+                'quantity': p.quantity,
+                'reorder_threshold': p.reorder_threshold,
+                'status': 'OUT_OF_STOCK' if p.quantity == 0 else 'LOW_STOCK',
+                'unit': p.unit,
+                'buying_price': float(p.buying_price),
+                'selling_price': float(p.selling_price)
             }
-            for product in profitable_products
+            for p in critical_stock
         ]
-
-        # Stock turnover (products with recent activity)
-        recent_invoice_lines = InvoiceLine.objects.filter(
-            created_at__gte=timezone.now() - timedelta(days=30)
-        ).values('product__name').annotate(
-            total_sold=Sum('quantity')
-        ).order_by('-total_sold')[:10]
-
-        return Response({
-            'low_stock_alerts': low_stock_data,
-            'total_stock_value': float(stock_value),
-            'most_profitable_products': profitable_products_data,
-            'recently_sold_products': list(recent_invoice_lines),
-            'stock_health': {
-                'total_products': Product.objects.count(),
-                'out_of_stock': Product.objects.filter(quantity=0).count(),
-                'low_stock': Product.objects.filter(
-                    quantity__lte=F('reorder_threshold'),
-                    quantity__gt=0
-                ).count(),
-                'healthy_stock': Product.objects.filter(
-                    quantity__gt=F('reorder_threshold')
-                ).count(),
+        
+        # ===== MOST USED PRODUCTS (Last 30 days) =====
+        thirty_days_ago = timezone.now() - timedelta(days=30)
+        most_used = Product.objects.annotate(
+            usage_count=Count('invoiceline', filter=Q(
+                invoiceline__created_at__gte=thirty_days_ago
+            )),
+            total_quantity_used=Sum('invoiceline__quantity', filter=Q(
+                invoiceline__created_at__gte=thirty_days_ago
+            )),
+            revenue_generated=Sum(
+                ExpressionWrapper(
+                    F('invoiceline__quantity') * F('invoiceline__unit_price'),
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                ),
+                filter=Q(invoiceline__created_at__gte=thirty_days_ago)
+            )
+        ).filter(usage_count__gt=0).order_by('-total_quantity_used')[:15]
+        
+        most_used_data = [
+            {
+                'product_id': p.id,
+                'name': p.name,
+                'sku': p.sku,
+                'times_used': p.usage_count,
+                'total_quantity_used': float(p.total_quantity_used or 0),
+                'revenue_generated': float(p.revenue_generated or 0),
+                'current_stock': p.quantity
             }
-        })
-    
+            for p in most_used
+        ]
+        
+        # ===== PROFITABILITY ANALYSIS =====
+        profitability = Product.objects.filter(
+            buying_price__gt=0,
+            selling_price__gt=0
+        ).annotate(
+            profit_margin=ExpressionWrapper(
+                ((F('selling_price') - F('buying_price')) / F('buying_price')) * 100,
+                output_field=DecimalField(max_digits=5, decimal_places=2)
+            ),
+            potential_profit=ExpressionWrapper(
+                F('quantity') * (F('selling_price') - F('buying_price')),
+                output_field=DecimalField(max_digits=15, decimal_places=2)
+            )
+        ).order_by('-profit_margin')[:10]
+        
+        profitability_data = [
+            {
+                'product_id': p.id,
+                'name': p.name,
+                'buying_price': float(p.buying_price),
+                'selling_price': float(p.selling_price),
+                'profit_margin': float(p.profit_margin),
+                'quantity': p.quantity,
+                'potential_profit': float(p.potential_profit)
+            }
+            for p in profitability
+        ]
+        
+        # ===== OVERALL INVENTORY HEALTH =====
+        inventory_health = Product.objects.aggregate(
+            total_value=Sum(
+                ExpressionWrapper(
+                    F('quantity') * F('buying_price'),
+                    output_field=DecimalField(max_digits=15, decimal_places=2)
+                )
+            ),
+            total_potential=Sum(
+                ExpressionWrapper(
+                    F('quantity') * F('selling_price'),
+                    output_field=DecimalField(max_digits=15, decimal_places=2)
+                )
+            ),
+            avg_stock_level=Avg('quantity')
+        )
+        
+        response_data = {
+            'generated_at': timezone.now().isoformat(),
+            'critical_stock_alerts': critical_data,
+            'most_used_products': most_used_data,
+            'most_profitable_products': profitability_data,
+            'inventory_health': {
+                'total_stock_value': float(inventory_health['total_value'] or 0),
+                'potential_revenue': float(inventory_health['total_potential'] or 0),
+                'potential_profit': float(
+                    (inventory_health['total_potential'] or 0) - 
+                    (inventory_health['total_value'] or 0)
+                ),
+                'avg_stock_level': float(inventory_health['avg_stock_level'] or 0)
+            }
+        }
+        
+        cache.set(cache_key, response_data, 300)  # 5 minutes
+        return Response(response_data)
 
-# dashboard/views.py (continued)
+
 class RecentActivityView(APIView):
+    """
+    Recent activity feed with pagination
+    Optimized to prevent memory overload
+    """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """
-        Get recent activity across all modules
-        """
-        # Recent projects
-        recent_projects = Project.objects.select_related('client').order_by('-created_at')[:5]
+        limit = min(int(request.GET.get('limit', 20)), 50)  # Max 50
         
-        # Recent invoices
-        recent_invoices = Invoice.objects.select_related('project', 'project__client').order_by('-created_at')[:5]
+        # Get recent items with single queries (prefetch related)
+        recent_projects = Project.objects.select_related(
+            'client', 'created_by'
+        ).order_by('-created_at')[:limit]
         
-        # Recent clients
-        recent_clients = Client.objects.order_by('-created_at')[:5]
+        recent_invoices = Invoice.objects.select_related(
+            'project', 'project__client', 'created_by'
+        ).order_by('-created_at')[:limit]
         
-        # Recent low stock products
-        recent_low_stock = Product.objects.filter(
-            quantity__lte=F('reorder_threshold')
-        ).order_by('-updated_at')[:5]
-
-        projects_data = [
-            {
+        recent_clients = Client.objects.order_by('-created_at')[:limit]
+        
+        # Build activity feed
+        activities = []
+        
+        # Projects
+        for project in recent_projects:
+            activities.append({
                 'type': 'project',
                 'id': project.id,
-                'name': project.name,
-                'client': project.client.name,
+                'title': f"Project: {project.name}",
+                'description': f"Client: {project.client.name}",
                 'status': project.status,
-                'timestamp': project.created_at,
-                'action': 'created'
-            }
-            for project in recent_projects
-        ]
-
-        invoices_data = [
-            {
+                'is_verified': project.is_verified,
+                'timestamp': project.created_at.isoformat(),
+                'user': project.created_by.get_full_name() if project.created_by else 'System'
+            })
+        
+        # Invoices
+        for invoice in recent_invoices:
+            activities.append({
                 'type': 'invoice',
                 'id': invoice.id,
-                'number': invoice.facture or invoice.bon_de_commande or 'No Number',
-                'project': invoice.project.name,
-                'total': float(invoice.total),
+                'title': f"Invoice: {invoice.facture or invoice.bon_de_commande or f'INV-{invoice.id}'}",
+                'description': f"Project: {invoice.project.name}",
                 'status': invoice.status,
-                'timestamp': invoice.created_at,
-                'action': 'created'
-            }
-            for invoice in recent_invoices
-        ]
-
-        clients_data = [
-            {
+                'amount': float(invoice.total),
+                'timestamp': invoice.created_at.isoformat(),
+                'user': invoice.created_by.get_full_name() if invoice.created_by else 'System'
+            })
+        
+        # Clients
+        for client in recent_clients:
+            activities.append({
                 'type': 'client',
                 'id': client.id,
-                'name': client.name,
-                'is_corporate': client.is_corporate,
-                'timestamp': client.created_at,
-                'action': 'created'
-            }
-            for client in recent_clients
-        ]
-
-        stock_data = [
-            {
-                'type': 'stock_alert',
-                'id': product.id,
-                'name': product.name,
-                'quantity': product.quantity,
-                'threshold': product.reorder_threshold,
-                'timestamp': product.updated_at,
-                'action': 'low_stock' if product.quantity > 0 else 'out_of_stock'
-            }
-            for product in recent_low_stock
-        ]
-
-        # Combine and sort all activities by timestamp
-        all_activities = projects_data + invoices_data + clients_data + stock_data
-        all_activities.sort(key=lambda x: x['timestamp'], reverse=True)
+                'title': f"Client: {client.name}",
+                'description': f"Type: {'Corporate' if client.is_corporate else 'Individual'}",
+                'timestamp': client.created_at.isoformat()
+            })
         
-        # Return only the 10 most recent activities
-        return Response(all_activities[:10])
+        # Sort all activities by timestamp
+        activities.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        return Response({
+            'total': len(activities),
+            'limit': limit,
+            'activities': activities[:limit]
+        })

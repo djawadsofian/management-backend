@@ -76,19 +76,27 @@ class Command(BaseCommand):
                 else:
                     end_date = None
                 
+                # Create project with maintenance settings
+                project_data = {
+                    'name': name,
+                    'client': client,
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'description': fake.paragraph(nb_sentences=3),
+                    'warranty_years': random.choice([1, 2, 3]),
+                    'warranty_months': random.choice([0, 1, 3, 6]),
+                    'warranty_days': random.choice([10, 15, 20, 25]),
+                    'is_verified': random.choice([True, False]),
+                    'created_by': created_by
+                }
+                
+                # Add maintenance settings with 70% chance
+                if random.randint(1, 100) <= maintenance_chance:
+                    project_data['duration_maintenance'] = random.choice([6, 12, 24, 36])
+                    project_data['interval_maintenance'] = random.choice([2, 3, 6, 12])
+                
                 # Create project
-                project = Project.objects.create(
-                    name=name,
-                    client=client,
-                    start_date=start_date,
-                    end_date=end_date,
-                    description=fake.paragraph(nb_sentences=3),
-                    warranty_years=random.choice([1, 2, 3]),
-                    warranty_months=random.choice([0, 1, 3, 6]),
-                    warranty_days=random.choice([10, 15, 20,25]),
-                    is_verified=random.choice([True, False]),
-                    created_by=created_by
-                )
+                project = Project.objects.create(**project_data)
                 
                 # Set verified info if project is verified
                 if project.is_verified:
@@ -105,24 +113,14 @@ class Command(BaseCommand):
                 project.assigned_employers.set(assigned_employers)
                 
                 projects_created += 1
-                self.stdout.write(f"   ✅ Created project: {project.name}")
                 
-                # Add maintenance records (70% chance per project)
-                if random.randint(1, 100) <= maintenance_chance:
-                    num_maintenances = random.randint(1, 3)
-                    
-                    for j in range(num_maintenances):
-                        duration = random.choice([6, 12, 24, 36])
-                        interval = random.choice([3, 6, 12])
-                        
-                        maintenance = Maintenance.objects.create(
-                            project=project,
-                            duration=duration,
-                            interval=interval
-                        )
-                        maintenances_created += 1
-                        
-                    self.stdout.write(f"   🔧 Added {num_maintenances} maintenance records")
+                # Count maintenances created automatically
+                maintenance_count = project.maintenances.count()
+                if maintenance_count > 0:
+                    maintenances_created += maintenance_count
+                    self.stdout.write(f"   ✅ Created project: {project.name} with {maintenance_count} maintenance records")
+                else:
+                    self.stdout.write(f"   ✅ Created project: {project.name} (no maintenance)")
                 
             except Exception as e:
                 self.stdout.write(f"   ❌ Error creating project {i+1}: {e}")
@@ -132,12 +130,44 @@ class Command(BaseCommand):
         ))
         
         # Display project status summary
-        active = Project.objects.filter(start_date__lte=datetime.now().date(), end_date__gte=datetime.now().date()).count()
-        completed = Project.objects.filter(end_date__lt=datetime.now().date()).count()
-        upcoming = Project.objects.filter(start_date__gt=datetime.now().date()).count()
+        total_projects = Project.objects.count()
+        verified_count = Project.objects.filter(is_verified=True).count()
+        
+        # Calculate status counts using the status property
+        active_count = 0
+        completed_count = 0
+        upcoming_count = 0
+        draft_count = 0
+        
+        for project in Project.objects.all():
+            if project.status == Project.STATUS_ACTIVE:
+                active_count += 1
+            elif project.status == Project.STATUS_COMPLETED:
+                completed_count += 1
+            elif project.status == Project.STATUS_UPCOMING:
+                upcoming_count += 1
+            elif project.status == Project.STATUS_DRAFT:
+                draft_count += 1
         
         self.stdout.write(f"📊 Project Status Summary:")
-        self.stdout.write(f"   🟢 Active: {active}")
-        self.stdout.write(f"   🔵 Completed: {completed}")
-        self.stdout.write(f"   🟡 Upcoming: {upcoming}")
-        self.stdout.write(f"   ✅ Verified: {Project.objects.filter(is_verified=True).count()}")
+        self.stdout.write(f"   🟢 Active: {active_count}")
+        self.stdout.write(f"   🔵 Completed: {completed_count}")
+        self.stdout.write(f"   🟡 Upcoming: {upcoming_count}")
+        self.stdout.write(f"   ⚪ Draft: {draft_count}")
+        self.stdout.write(f"   ✅ Verified: {verified_count}/{total_projects}")
+        
+        # Display maintenance statistics
+        projects_with_maintenance = Project.objects.filter(
+            duration_maintenance__isnull=False,
+            interval_maintenance__isnull=False
+        ).count()
+        
+        total_maintenances = Maintenance.objects.count()
+        
+        self.stdout.write(f"🔧 Maintenance Statistics:")
+        self.stdout.write(f"   📋 Projects with maintenance: {projects_with_maintenance}/{total_projects}")
+        self.stdout.write(f"   ⚙️ Total maintenance records: {total_maintenances}")
+        
+        if total_maintenances > 0:
+            avg_maintenances_per_project = total_maintenances / projects_with_maintenance
+            self.stdout.write(f"   📊 Average maintenances per project: {avg_maintenances_per_project:.1f}")

@@ -34,6 +34,18 @@ class Project(TimeStampedModel):
     end_date = models.DateField(null=True, blank=True, db_index=True)
     description = models.TextField(blank=True)
 
+    # Maintenance settings
+    duration_maintenance = models.PositiveIntegerField(
+        null=True, 
+        blank=True,
+        help_text="Maintenance contract duration in months"
+    )
+    interval_maintenance = models.PositiveIntegerField(
+        null=True, 
+        blank=True,
+        help_text="Months between maintenance visits"
+    )
+
     # Warranty period components
     warranty_years = models.PositiveIntegerField(default=0)
     warranty_months = models.PositiveIntegerField(default=0)
@@ -73,6 +85,42 @@ class Project(TimeStampedModel):
 
     def __str__(self):
         return f"{self.name} - {self.client.name}"
+
+    def save(self, *args, **kwargs):
+        """Override save to handle maintenance creation/update"""
+        is_new = self.pk is None
+        
+        # Call original save first to get PK
+        super().save(*args, **kwargs)
+        
+        # Handle maintenance creation/update
+        if self.duration_maintenance and self.interval_maintenance and self.end_date:
+            self._update_maintenances()
+
+    def _update_maintenances(self):
+        """Delete existing maintenances and create new ones based on current settings"""
+        # Delete all existing maintenances
+        self.maintenances.all().delete()
+        
+        # Calculate number of maintenance instances needed
+        if self.interval_maintenance > 0:
+            num_maintenances = self.duration_maintenance // self.interval_maintenance
+        else:
+            num_maintenances = 0
+            
+        # Create maintenance instances
+        for i in range(num_maintenances):
+            maintenance_number = i + 1
+            months_after_project_end = self.interval_maintenance * maintenance_number
+            
+            start_date = self.end_date + relativedelta(months=months_after_project_end)
+            
+            Maintenance.objects.create(
+                project=self,
+                start_date=start_date,
+                end_date=start_date,  # Same as start date as specified
+                maintenance_number=maintenance_number
+            )
 
     # Verification Methods
     def verify(self, by_user):
@@ -188,59 +236,34 @@ class Project(TimeStampedModel):
 class Maintenance(TimeStampedModel):
     """
     Maintenance schedule tracking for projects.
-    Automatically calculates next maintenance dates.
+    Simple model with start and end dates.
     """
     project = models.ForeignKey(
         Project,
         on_delete=models.CASCADE,
         related_name='maintenances'
     )
-    duration = models.PositiveIntegerField(
-        help_text="Maintenance contract duration in months"
+    start_date = models.DateField(db_index=True)
+    end_date = models.DateField(db_index=True)
+    maintenance_number = models.PositiveIntegerField(
+        help_text="Maintenance sequence number"
     )
-    interval = models.PositiveIntegerField(
-        help_text="Months between maintenance visits"
-    )
-    next_maintenance_date = models.DateField(null=True, blank=True, db_index=True)
 
     class Meta:
-        ordering = ['next_maintenance_date']
+        ordering = ['start_date']
         indexes = [
-            models.Index(fields=['next_maintenance_date']),
+            models.Index(fields=['start_date', 'end_date']),
         ]
 
     def __str__(self):
-        return f"Maintenance for {self.project.name}"
-
-    def calculate_next_date(self):
-        """Calculate next maintenance date based on interval"""
-        if not self.project.start_date:
-            return None
-        
-        base_date = self.next_maintenance_date or self.project.start_date
-        return base_date + relativedelta(months=self.interval)
-
-    def save(self, *args, **kwargs):
-        """Auto-calculate next maintenance date if not set"""
-        if not self.next_maintenance_date:
-            self.next_maintenance_date = self.calculate_next_date()
-        super().save(*args, **kwargs)
+        return f"Maintenance #{self.maintenance_number} for {self.project.name}"
 
     @property
     def is_overdue(self):
         """Check if maintenance is overdue"""
-        if not self.next_maintenance_date:
-            return False
-        return self.next_maintenance_date < timezone.now().date()
+        return self.end_date < timezone.now().date()
 
     @property
     def days_until_maintenance(self):
-        """Days until next maintenance (negative if overdue)"""
-        if not self.next_maintenance_date:
-            return None
-        return (self.next_maintenance_date - timezone.now().date()).days
-
-    def mark_completed(self):
-        """Mark maintenance as completed and schedule next"""
-        self.next_maintenance_date = self.calculate_next_date()
-        self.save(update_fields=['next_maintenance_date', 'updated_at'])
+        """Days until maintenance (negative if overdue)"""
+        return (self.start_date - timezone.now().date()).days

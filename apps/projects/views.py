@@ -60,8 +60,9 @@ class ProjectViewSet(
     ordering_fields = ['start_date', 'created_at', 'name']
 
     def get_serializer_class(self):
+        # Use ProjectDetailSerializer for both list and detail to provide full information
         if self.action == 'list':
-            return ProjectListSerializer
+            return ProjectDetailSerializer  # Changed from ProjectListSerializer
         return ProjectDetailSerializer
 
     @action(detail=True, methods=['post'])
@@ -162,15 +163,15 @@ class ProjectViewSet(
         
         # Maintenance events
         for maintenance in project.maintenances.all():
-            if maintenance.next_maintenance_date:
-                events.append({
-                    'id': f'maintenance-{maintenance.id}',
-                    'title': f'Maintenance: {project.name}',
-                    'start': maintenance.next_maintenance_date.isoformat(),
-                    'type': 'maintenance',
-                    'project_id': project.id,
-                    'maintenance_id': maintenance.id,
-                })
+            events.append({
+                'id': f'maintenance-{maintenance.id}',
+                'title': f'Maintenance #{maintenance.maintenance_number}: {project.name}',
+                'start': maintenance.start_date.isoformat(),
+                'end': maintenance.end_date.isoformat(),
+                'type': 'maintenance',
+                'project_id': project.id,
+                'maintenance_id': maintenance.id,
+            })
         
         return Response(events)
 
@@ -182,30 +183,13 @@ class MaintenanceViewSet(
 ):
     """
     ViewSet for managing maintenance schedules.
-    
-    Custom Actions:
-        - mark_completed: Mark maintenance as completed and schedule next
     """
     queryset = Maintenance.objects.select_related('project__client')
     serializer_class = MaintenanceSerializer
     permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
     pagination_class = StaticPagination
     
-    filterset_fields = ['next_maintenance_date', 'project']
+    filterset_fields = ['start_date', 'end_date', 'project']
     search_fields = ['project__name']
-    ordering_fields = ['next_maintenance_date', 'created_at']
-    ordering = ['next_maintenance_date']
-
-    @action(detail=True, methods=['post'])
-    def mark_completed(self, request, pk=None):
-        """
-        Mark maintenance as completed and schedule the next one.
-        """
-        maintenance = self.get_object()
-        maintenance.mark_completed()
-        
-        serializer = self.get_serializer(maintenance)
-        return Response(serializer.data)
-    
-
-
+    ordering_fields = ['start_date', 'end_date', 'created_at']
+    ordering = ['start_date']

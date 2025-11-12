@@ -154,14 +154,16 @@ class Invoice(TimeStampedModel):
         with transaction.atomic():
             # Lock the invoice
             locked_invoice = Invoice.objects.select_for_update().get(pk=self.pk)
-            
-            # Calculate subtotal from all lines
-            lines_total = sum(
-                line.line_total for line in locked_invoice.lines.all()
-            )
+
+            lines = locked_invoice.lines.select_for_update().all()
+            lines_total = sum(line.line_total for line in lines)
+
+             # Convert to Decimal to ensure quantize method exists
+            lines_total = Decimal(lines_total)
             
             if lines_total < 0:
                 raise ValidationError("Invoice subtotal cannot be negative")
+            
             
             # Calculate tax amount
             tax_amount = (lines_total * locked_invoice.tva / Decimal('100.00')).quantize(
