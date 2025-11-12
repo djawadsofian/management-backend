@@ -32,7 +32,7 @@ class Project(TimeStampedModel):
     )
     start_date = models.DateField(db_index=True)
     end_date = models.DateField(null=True, blank=True, db_index=True)
-    description = models.TextField(blank=True)
+    description = models.TextField(blank=True,null=True)
 
     # Maintenance settings
     duration_maintenance = models.PositiveIntegerField(
