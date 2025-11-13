@@ -17,6 +17,14 @@ class MaintenanceSerializer(serializers.ModelSerializer):
         model = Maintenance
         fields = "__all__"
         read_only_fields = ("created_at", "updated_at", "maintenance_number")
+        
+    def create(self, validated_data):
+        """Override create to set maintenance_type to MANUAL for user-created maintenances"""
+        # If maintenance_type is not provided, set it to MANUAL
+        if 'maintenance_type' not in validated_data:
+            validated_data['maintenance_type'] = Maintenance.TYPE_MANUAL
+        
+        return super().create(validated_data)
 
 class AssignedEmployerSerializer(serializers.Serializer):
     id = serializers.IntegerField()
@@ -25,6 +33,7 @@ class AssignedEmployerSerializer(serializers.Serializer):
 class ProjectListSerializer(serializers.ModelSerializer):
     client = serializers.StringRelatedField()
     assigned_employers = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+    invoices = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     status = serializers.ReadOnlyField()
     warranty_display = serializers.ReadOnlyField()
     warranty_end_date = serializers.ReadOnlyField()
@@ -37,7 +46,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
             "id", "name", "client", "start_date", "end_date", 
             "is_verified", "status", "assigned_employers", 
             "warranty_display", "warranty_end_date", "progress_percentage",
-            "duration_maintenance", "interval_maintenance", "maintenances"
+            "duration_maintenance", "interval_maintenance", "maintenances","invoices"
         )
 
 
@@ -49,6 +58,8 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         many=True, 
         queryset=User.objects.all()
     )
+    invoices = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+
     status = serializers.ReadOnlyField()
     maintenances = MaintenanceSerializer(many=True, read_only=True)
     warranty_duration_display = serializers.ReadOnlyField()

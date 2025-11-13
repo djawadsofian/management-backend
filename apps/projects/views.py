@@ -55,8 +55,8 @@ class ProjectViewSet(
     pagination_class = StaticPagination
     
     # Filtering configuration
-    filterset_fields = ['start_date', 'end_date', 'is_verified', 'client']
-    search_fields = ['name', 'client__name', 'description']
+    filterset_fields = ['start_date', 'end_date', 'is_verified', 'client', 'invoices__facture']
+    search_fields = ['name', 'client__name', 'description', 'invoices__facture']
     ordering_fields = ['start_date', 'created_at', 'name']
 
     def get_serializer_class(self):
@@ -84,6 +84,23 @@ class ProjectViewSet(
         
         serializer = self.get_serializer(project)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def unverify(self, request, pk=None):
+        """Mark project as unverified (return to draft)"""
+        project = self.get_object()
+        
+        if not project.is_verified:
+            return Response(
+                {'detail': 'Project is already not verified'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        project.unverify()
+        serializer = self.get_serializer(project)
+        return Response(serializer.data)
+
 
     @action(detail=True, methods=['post'])
     @transaction.atomic
@@ -189,7 +206,15 @@ class MaintenanceViewSet(
     permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
     pagination_class = StaticPagination
     
-    filterset_fields = ['start_date', 'end_date', 'project']
+    filterset_fields = ['start_date', 'end_date', 'project', 'maintenance_type']  # Add maintenance_type
     search_fields = ['project__name']
-    ordering_fields = ['start_date', 'end_date', 'created_at']
+    ordering_fields = ['start_date', 'end_date', 'created_at', 'maintenance_type']
     ordering = ['start_date']
+    
+    def create(self, request, *args, **kwargs):
+        """Ensure manual maintenances are created with MANUAL type"""
+        # If maintenance_type is not provided in request, set it to MANUAL
+        if 'maintenance_type' not in request.data:
+            request.data['maintenance_type'] = Maintenance.TYPE_MANUAL
+        
+        return super().create(request, *args, **kwargs)

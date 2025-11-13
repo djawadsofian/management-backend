@@ -88,19 +88,23 @@ class Project(TimeStampedModel):
 
     def save(self, *args, **kwargs):
         """Override save to handle maintenance creation/update"""
+        # Set end_date to start_date if not provided
+        if not self.end_date:
+            self.end_date = self.start_date
+            
         is_new = self.pk is None
         
         # Call original save first to get PK
         super().save(*args, **kwargs)
         
-        # Handle maintenance creation/update
+        # Handle maintenance creation/update - only for AUTO type
         if self.duration_maintenance and self.interval_maintenance and self.end_date:
             self._update_maintenances()
 
     def _update_maintenances(self):
-        """Delete existing maintenances and create new ones based on current settings"""
-        # Delete all existing maintenances
-        self.maintenances.all().delete()
+        """Delete existing AUTO maintenances and create new ones based on current settings"""
+        # Delete only AUTO type maintenances
+        self.maintenances.filter(maintenance_type=Maintenance.TYPE_AUTO).delete()
         
         # Calculate number of maintenance instances needed
         if self.interval_maintenance > 0:
@@ -108,7 +112,7 @@ class Project(TimeStampedModel):
         else:
             num_maintenances = 0
             
-        # Create maintenance instances
+        # Create maintenance instances with AUTO type
         for i in range(num_maintenances):
             maintenance_number = i + 1
             months_after_project_end = self.interval_maintenance * maintenance_number
@@ -119,15 +123,22 @@ class Project(TimeStampedModel):
                 project=self,
                 start_date=start_date,
                 end_date=start_date,  # Same as start date as specified
-                maintenance_number=maintenance_number
+                maintenance_number=maintenance_number,
+                maintenance_type=Maintenance.TYPE_AUTO  # Set as AUTO type
             )
-
     # Verification Methods
     def verify(self, by_user):
         """Mark project as verified"""
         self.is_verified = True
         self.verified_at = timezone.now()
         self.verified_by = by_user
+        self.save(update_fields=['is_verified', 'verified_at', 'verified_by', 'updated_at'])
+
+    def unverify(self):
+        """Mark project as unverified (return to draft)"""
+        self.is_verified = False
+        self.verified_at = None
+        self.verified_by = None
         self.save(update_fields=['is_verified', 'verified_at', 'verified_by', 'updated_at'])
 
     # Status Properties
@@ -236,8 +247,15 @@ class Project(TimeStampedModel):
 class Maintenance(TimeStampedModel):
     """
     Maintenance schedule tracking for projects.
-    Simple model with start and end dates.
     """
+    # Maintenance type choices
+    TYPE_AUTO = 'AUTO'
+    TYPE_MANUAL = 'MANUAL'
+    TYPE_CHOICES = [
+        (TYPE_AUTO, 'Automatically Generated'),
+        (TYPE_MANUAL, 'Manually Created'),
+    ]
+    
     project = models.ForeignKey(
         Project,
         on_delete=models.CASCADE,
@@ -248,15 +266,23 @@ class Maintenance(TimeStampedModel):
     maintenance_number = models.PositiveIntegerField(
         help_text="Maintenance sequence number"
     )
+    maintenance_type = models.CharField(
+        max_length=10,
+        choices=TYPE_CHOICES,
+        default=TYPE_AUTO,
+        db_index=True
+    )
 
     class Meta:
         ordering = ['start_date']
         indexes = [
             models.Index(fields=['start_date', 'end_date']),
+            models.Index(fields=['maintenance_type']),
         ]
 
     def __str__(self):
-        return f"Maintenance #{self.maintenance_number} for {self.project.name}"
+        type_display = "Auto" if self.maintenance_type == self.TYPE_AUTO else "Manual"
+        return f"Maintenance #{self.maintenance_number} ({type_display}) for {self.project.name}"
 
     @property
     def is_overdue(self):

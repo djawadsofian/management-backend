@@ -96,6 +96,37 @@ class AssistantViewSet(BaseUserViewSet):
     queryset = CustomUser.objects.filter(role=CustomUser.ROLE_ASSISTANT)
     permission_classes = [IsAdmin]
     create_serializer_class = AssistantCreateSerializer
+    @action(detail=True, methods=['patch'])
+    def update_permissions(self, request, pk=None):
+        """Update price permissions for assistant"""
+        user = self.get_object()
+        
+        # Only admins can update permissions
+        if not request.user.is_admin():
+            return Response(
+                {'detail': 'Only admins can update permissions'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Allowed fields to update
+        allowed_fields = ['can_see_selling_price', 'can_edit_selling_price', 'can_edit_buying_price']
+        
+        # Filter only allowed fields
+        update_data = {field: request.data[field] for field in allowed_fields if field in request.data}
+        
+        if not update_data:
+            return Response(
+                {'detail': 'No valid permission fields provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Update the fields
+        for field, value in update_data.items():
+            setattr(user, field, value)
+        
+        user.save(update_fields=update_data.keys())
+        serializer = self.get_serializer(user)
+        return Response(serializer.data)
 
 
 
