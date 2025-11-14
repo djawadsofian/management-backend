@@ -143,7 +143,7 @@ def my_calendar(request):
     - Employers: See only assigned projects and their maintenances
     
     Query Parameters:
-        - event_type: Filter by event type (project_start, project_end, maintenance, or all)
+        - event_type: Filter by event type (project, maintenance, or all)
         - project_name: Search by project name (case-insensitive partial match)
         - client_name: Search by client name (case-insensitive partial match)
         - start_date: Filter events from this date (YYYY-MM-DD)
@@ -156,7 +156,7 @@ def my_calendar(request):
         - postal_code: Filter by client's postal code
     
     Returns:
-        List of calendar events with project start/end dates and maintenance schedules
+        List of calendar events with project dates and maintenance schedules
     
     Examples:
         - /api/users/my-calendar/?event_type=maintenance
@@ -235,35 +235,30 @@ def my_calendar(request):
                 'postal_code': project.client.address.get('postal_code', ''),
             }
         
-        # Project start event
-        if event_type in ['all', 'project_start']:
-            events.append({
-                'id': f'project-{project.id}-start',
-                'title': f'Start: {project.name}',
+        # Single project event (combining start and end)
+        if event_type in ['all', 'project']:
+            project_event = {
+                'id': f'project-{project.id}',
+                'title': f'Project: {project.name}',
                 'start': project.start_date.isoformat(),
-                'type': 'project_start',
+                'type': 'project',
                 'project_id': project.id,
                 'project_name': project.name,
                 'client_name': project.client.name,
                 'client_address': client_address,
                 'status': project.status,
                 'is_verified': project.is_verified,
-            })
-        
-        # Project end event (if exists)
-        if project.end_date and event_type in ['all', 'project_end']:
-            events.append({
-                'id': f'project-{project.id}-end',
-                'title': f'End: {project.name}',
-                'start': project.end_date.isoformat(),
-                'type': 'project_end',
-                'project_id': project.id,
-                'project_name': project.name,
-                'client_name': project.client.name,
-                'client_address': client_address,
-                'status': project.status,
-                'is_verified': project.is_verified,
-            })
+                'start_date': project.start_date.isoformat(),
+                'end_date': project.end_date.isoformat() if project.end_date else None,
+                'duration_days': project.duration_days,
+                'progress_percentage': project.progress_percentage,
+            }
+            
+            # If project has end date, use it as the end date for the calendar event
+            if project.end_date:
+                project_event['end'] = project.end_date.isoformat()
+            
+            events.append(project_event)
         
         # Maintenance events
         if event_type in ['all', 'maintenance']:
@@ -280,6 +275,7 @@ def my_calendar(request):
                     'start': maintenance.start_date.isoformat(),
                     'end': maintenance.end_date.isoformat(),
                     'type': 'maintenance',
+                    'maintenance_type': maintenance.maintenance_type,  # Added maintenance type
                     'project_id': project.id,
                     'project_name': project.name,
                     'client_name': project.client.name,
