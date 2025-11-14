@@ -31,7 +31,7 @@ class Project(TimeStampedModel):
         related_name='projects'
     )
     start_date = models.DateField(db_index=True)
-    end_date = models.DateField(null=True, blank=True, db_index=True)
+    end_date = models.DateField(null=True, blank=True, db_index=True )
     description = models.TextField(blank=True,null=True)
 
     # Maintenance settings

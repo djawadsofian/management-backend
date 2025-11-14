@@ -415,21 +415,16 @@ class InvoiceLine(TimeStampedModel):
 
     @transaction.atomic
     def save(self, *args, **kwargs):
-        """
-        Save line and handle stock based on invoice status.
-        
-        - DRAFT: No stock changes
-        - ISSUED: Adjust stock immediately
-        - PAID: Should not be called (validation prevents this)
-        """
+        """Save line and handle stock based on invoice status."""
         self.clean()  # Validate first
         
         is_new = self.pk is None
         old_quantity = None
         
+        # Get old quantity before saving
         if not is_new:
             try:
-                old_line = InvoiceLine.objects.select_for_update().get(pk=self.pk)
+                old_line = InvoiceLine.objects.get(pk=self.pk)
                 old_quantity = old_line.quantity
             except InvoiceLine.DoesNotExist:
                 pass
@@ -437,7 +432,7 @@ class InvoiceLine(TimeStampedModel):
         # Calculate line total
         self.line_total = self.calculate_line_total()
         
-        # Save the line
+        # Save the line first
         super().save(*args, **kwargs)
         
         # Handle stock if invoice is issued
@@ -450,29 +445,29 @@ class InvoiceLine(TimeStampedModel):
                     'subtract'
                 )
             elif old_quantity is not None:
-                # Updated line on issued invoice - adjust difference
+                # FIX: Use proper decimal comparison
                 old_qty = float(old_quantity)
                 new_qty = float(self.quantity)
                 qty_diff = new_qty - old_qty
                 
-                if qty_diff > 0:
-                    # Quantity increased - subtract more
-                    StockService.adjust_stock(
-                        self.product,
-                        abs(qty_diff),
-                        'subtract'
-                    )
-                elif qty_diff < 0:
-                    # Quantity decreased - add back
-                    StockService.adjust_stock(
-                        self.product,
-                        abs(qty_diff),
-                        'add'
-                    )
+                if abs(qty_diff) > 0.001:  # Account for decimal precision
+                    if qty_diff > 0:
+                        StockService.adjust_stock(
+                            self.product,
+                            abs(qty_diff),
+                            'subtract'
+                        )
+                    else:
+                        StockService.adjust_stock(
+                            self.product,
+                            abs(qty_diff),
+                            'add'
+                        )
         
         # Update invoice totals
         self.invoice.calculate_totals()
 
+        
     @transaction.atomic
     def delete(self, *args, **kwargs):
         """

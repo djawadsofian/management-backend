@@ -289,9 +289,10 @@ class InvoiceLineModelTests(TestCase):
         """Test creating line on ISSUED invoice - immediate stock change"""
         invoice = Invoice.objects.create(
             project=self.project,
-            created_by=self.user
+            created_by=self.admin
         )
         
+        # First line - subtracts 20
         InvoiceLine.objects.create(
             invoice=invoice,
             product=self.product,
@@ -299,11 +300,11 @@ class InvoiceLineModelTests(TestCase):
             unit_price=Decimal('75.00')
         )
         
-        invoice.issue()
+        invoice.issue()  # Stock becomes 80 (100-20)
         
-        initial_stock = self.product.quantity
+        initial_stock = self.product.quantity  # This is 80, not 100!
         
-        # Add another line to issued invoice
+        # Add second line - subtracts 15 more
         InvoiceLine.objects.create(
             invoice=invoice,
             product=self.product,
@@ -311,9 +312,9 @@ class InvoiceLineModelTests(TestCase):
             unit_price=Decimal('75.00')
         )
         
-        # Stock should decrease immediately
+        # Stock should be 80 - 15 = 65 (CORRECT!)
         self.product.refresh_from_db()
-        self.assertEqual(self.product.quantity, initial_stock - 15)
+        self.assertEqual(self.product.quantity, 65)  # Fix the assertion
     
     def test_update_line_on_issued_invoice(self):
         """Test updating line on ISSUED invoice - stock adjustment"""

@@ -56,7 +56,7 @@ class ProjectViewSet(
     
     # Filtering configuration
     filterset_fields = ['start_date', 'end_date', 'is_verified', 'client', 'invoices__facture']
-    search_fields = ['name', 'client__name', 'description', 'invoices__facture']
+    search_fields = ['name', 'client__name', 'description', 'invoices__facture','client__address__province', 'client__address__city','client__address__postal_code'] 
     ordering_fields = ['start_date', 'created_at', 'name']
 
     def get_serializer_class(self):

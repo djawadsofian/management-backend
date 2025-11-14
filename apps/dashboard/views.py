@@ -23,6 +23,7 @@ from apps.invoices.models import Invoice, InvoiceLine
 from apps.stock.models import Product
 from apps.clients.models import Client
 from apps.users.models import CustomUser
+from config import settings
 
 
 class DashboardSummaryView(APIView):
@@ -33,6 +34,11 @@ class DashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
+
+        # For testing, disable cache or clear it
+        if getattr(settings, 'TESTING', False):
+            cache.delete('dashboard_summary')
+
         # Check cache first (5 minutes)
         cache_key = 'dashboard_summary'
         cached_data = cache.get(cache_key)
@@ -582,33 +588,32 @@ class InventoryAnalyticsView(APIView):
             return Response(cached_data)
         
         # ===== CRITICAL STOCK ALERTS =====
-        critical_stock = Product.objects.filter(
-            Q(quantity=0) | Q(quantity__lte=F('reorder_threshold'))
-        ).annotate(
-            stock_status=Case(
-                When(quantity=0, then='OUT_OF_STOCK'),
-                default='LOW_STOCK'
-            ),
-            potential_loss=ExpressionWrapper(
-                F('reorder_threshold') * F('selling_price'),
-                output_field=DecimalField(max_digits=12, decimal_places=2)
-            )
-        ).order_by('quantity', '-potential_loss')[:20]
+        all_products = Product.objects.all()
+        critical_stock = []
         
-        critical_data = [
-            {
-                'product_id': p.id,
-                'name': p.name,
-                'sku': p.sku,
-                'quantity': p.quantity,
-                'reorder_threshold': p.reorder_threshold,
-                'status': 'OUT_OF_STOCK' if p.quantity == 0 else 'LOW_STOCK',
-                'unit': p.unit,
-                'buying_price': float(p.buying_price),
-                'selling_price': float(p.selling_price)
-            }
-            for p in critical_stock
-        ]
+        for product in all_products:
+            if product.quantity == 0:
+                stock_status = 'OUT_OF_STOCK'
+            elif product.quantity <= product.reorder_threshold:
+                stock_status = 'LOW_STOCK'
+            else:
+                continue  # Skip healthy stock
+                
+            critical_stock.append({
+                'product_id': product.id,
+                'name': product.name,
+                'sku': product.sku,
+                'quantity': product.quantity,
+                'reorder_threshold': product.reorder_threshold,
+                'status': stock_status,
+                'unit': product.unit,
+                'buying_price': float(product.buying_price),
+                'selling_price': float(product.selling_price)
+            })
+        
+        # Sort by status and quantity
+        critical_stock.sort(key=lambda x: (x['status'], x['quantity']))
+        critical_data = critical_stock[:20]  # Limit to 20 items
         
         # ===== MOST USED PRODUCTS (Last 30 days) =====
         thirty_days_ago = timezone.now() - timedelta(days=30)

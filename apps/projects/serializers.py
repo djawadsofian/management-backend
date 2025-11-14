@@ -78,6 +78,11 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             "is_completed"
         )
 
+    def validate(self, data):
+        """Allow projects without end_date - model will handle it"""
+        # Remove end_date validation or make it optional
+        return data
+    
     def create(self, validated_data):
         assigned_employers_data = validated_data.pop('assigned_employers', [])
         request = self.context.get("request")
@@ -85,6 +90,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         if request and request.user and not validated_data.get("created_by"):
             validated_data["created_by"] = request.user
         
+        # Let the model handle end_date default in save() method
         project = super().create(validated_data)
         project.assigned_employers.set(assigned_employers_data)
         return project
