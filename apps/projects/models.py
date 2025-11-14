@@ -31,8 +31,8 @@ class Project(TimeStampedModel):
         related_name='projects'
     )
     start_date = models.DateField(db_index=True)
-    end_date = models.DateField(null=True, blank=True, db_index=True )
-    description = models.TextField(blank=True,null=True)
+    end_date = models.DateField(null=True, blank=True, db_index=True)
+    description = models.TextField(blank=True, null=True)
 
     # Maintenance settings
     duration_maintenance = models.PositiveIntegerField(
@@ -114,8 +114,7 @@ class Project(TimeStampedModel):
             
         # Create maintenance instances with AUTO type
         for i in range(num_maintenances):
-            maintenance_number = i + 1
-            months_after_project_end = self.interval_maintenance * maintenance_number
+            months_after_project_end = self.interval_maintenance * (i + 1)
             
             start_date = self.end_date + relativedelta(months=months_after_project_end)
             
@@ -123,9 +122,9 @@ class Project(TimeStampedModel):
                 project=self,
                 start_date=start_date,
                 end_date=start_date,  # Same as start date as specified
-                maintenance_number=maintenance_number,
                 maintenance_type=Maintenance.TYPE_AUTO  # Set as AUTO type
             )
+
     # Verification Methods
     def verify(self, by_user):
         """Mark project as verified"""
@@ -263,9 +262,6 @@ class Maintenance(TimeStampedModel):
     )
     start_date = models.DateField(db_index=True)
     end_date = models.DateField(db_index=True)
-    maintenance_number = models.PositiveIntegerField(
-        help_text="Maintenance sequence number"
-    )
     maintenance_type = models.CharField(
         max_length=10,
         choices=TYPE_CHOICES,
@@ -282,7 +278,7 @@ class Maintenance(TimeStampedModel):
 
     def __str__(self):
         type_display = "Auto" if self.maintenance_type == self.TYPE_AUTO else "Manual"
-        return f"Maintenance #{self.maintenance_number} ({type_display}) for {self.project.name}"
+        return f"Maintenance ({type_display}) for {self.project.name} - {self.start_date}"
 
     @property
     def is_overdue(self):

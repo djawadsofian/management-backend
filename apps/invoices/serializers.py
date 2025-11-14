@@ -17,17 +17,17 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
 
     def validate_quantity(self, value):
         if value <= 0:
-            raise serializers.ValidationError("Quantity must be positive")
+            raise serializers.ValidationError({"message": "La quantité doit être positive"})
         return value
 
     def validate_unit_price(self, value):
         if value < 0:
-            raise serializers.ValidationError("Unit price cannot be negative")
+            raise serializers.ValidationError({"message": "Le prix unitaire ne peut pas être négatif"})
         return value
 
     def validate_discount(self, value):
         if value < 0:
-            raise serializers.ValidationError("Discount cannot be negative")
+            raise serializers.ValidationError({"message": "La remise ne peut pas être négative"})
         return value
 
     def validate(self, data):
@@ -38,9 +38,9 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
             invoice = self.instance.invoice
         
         if invoice and not invoice.is_editable:
-            raise serializers.ValidationError(
-                "Cannot modify lines on a paid invoice"
-            )
+            raise serializers.ValidationError({
+                "message": "Impossible de modifier les lignes d'une facture payée"
+            })
         
         return data
 
@@ -88,7 +88,7 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
     def validate_status(self, value):
         """Ensure new invoices start as DRAFT"""
         if value != Invoice.STATUS_DRAFT:
-            raise serializers.ValidationError("New invoices must start as DRAFT")
+            raise serializers.ValidationError({"message": "Les nouvelles factures doivent commencer en brouillon"})
         return value
 
     def create(self, validated_data):
@@ -120,9 +120,9 @@ class InvoiceUpdateSerializer(serializers.ModelSerializer):
     def validate(self, data):
         """Validate that invoice is editable"""
         if self.instance and not self.instance.is_editable:
-            raise serializers.ValidationError(
-                "Cannot update a paid invoice"
-            )
+            raise serializers.ValidationError({
+                "message": "Impossible de modifier une facture payée"
+            })
         return data
 
     def update(self, instance, validated_data):
@@ -141,23 +141,23 @@ class InvoiceStatusUpdateSerializer(serializers.Serializer):
     """Serializer for status transition actions"""
     action = serializers.ChoiceField(
         choices=['issue', 'mark_paid', 'revert_to_draft'],
-        help_text="Action to perform: issue (DRAFT->ISSUED), mark_paid (ISSUED->PAID), revert_to_draft (ISSUED->DRAFT)"
+        help_text="Action à effectuer: issue (BROUILLON->ÉMISE), mark_paid (ÉMISE->PAYÉE), revert_to_draft (ÉMISE->BROUILLON)"
     )
     
     def validate_action(self, value):
         invoice = self.context.get('invoice')
         
         if not invoice:
-            raise serializers.ValidationError("Invoice not found in context")
+            raise serializers.ValidationError({"message": "Facture non trouvée"})
         
         # Validate transitions
         if value == 'issue' and invoice.status != Invoice.STATUS_DRAFT:
-            raise serializers.ValidationError("Can only issue draft invoices")
+            raise serializers.ValidationError({"message": "Seules les factures en brouillon peuvent être émises"})
         
         if value == 'mark_paid' and invoice.status != Invoice.STATUS_ISSUED:
-            raise serializers.ValidationError("Can only mark issued invoices as paid")
+            raise serializers.ValidationError({"message": "Seules les factures émises peuvent être marquées comme payées"})
         
         if value == 'revert_to_draft' and invoice.status != Invoice.STATUS_ISSUED:
-            raise serializers.ValidationError("Can only revert issued invoices to draft")
+            raise serializers.ValidationError({"message": "Seules les factures émises peuvent revenir au brouillon"})
         
         return value

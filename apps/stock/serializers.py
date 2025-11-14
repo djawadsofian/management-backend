@@ -1,3 +1,4 @@
+# apps/stock/serializers.py
 from rest_framework import serializers
 from apps.stock.models import Product
 
@@ -17,22 +18,22 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def validate_quantity(self, value):
         if value < 0:
-            raise serializers.ValidationError("Quantity cannot be negative.")
+            raise serializers.ValidationError({"message": "Quantité ne peut pas être négative"})
         return value
 
     def validate_reorder_threshold(self, value):
         if value < 0:
-            raise serializers.ValidationError("Reorder threshold cannot be negative.")
+            raise serializers.ValidationError({"message": "Seuil de réapprovisionnement ne peut pas être négatif"})
         return value
 
     def validate_buying_price(self, value):
         if value < 0:
-            raise serializers.ValidationError("Buying price cannot be negative.")
+            raise serializers.ValidationError({"message": "Prix d'achat ne peut pas être négatif"})
         return value
 
     def validate_selling_price(self, value):
         if value < 0:
-            raise serializers.ValidationError("Selling price cannot be negative.")
+            raise serializers.ValidationError({"message": "Prix de vente ne peut pas être négatif"})
         return value
 
     def validate(self, data):
@@ -44,7 +45,7 @@ class ProductSerializer(serializers.ModelSerializer):
         
         if buying_price and selling_price and selling_price < buying_price:
             raise serializers.ValidationError({
-                'selling_price': 'Selling price cannot be less than buying price.'
+                "message": "Prix de vente ne peut pas être inférieur au prix d'achat"
             })
         
         return data

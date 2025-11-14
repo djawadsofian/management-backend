@@ -246,6 +246,12 @@ class ProductViewSetTests(APITestCase):
             role=User.ROLE_ADMIN
         )
         
+        self.assistant = User.objects.create_user(
+            username='assistant',
+            password='pass123',
+            role=User.ROLE_ASSISTANT
+        )
+        
         self.employer = User.objects.create_user(
             username='employer',
             password='pass123',
@@ -261,21 +267,30 @@ class ProductViewSetTests(APITestCase):
         )
         
         self.url = reverse('products-list')
-    
-    def test_list_products_authenticated(self):
-        """Test listing products as authenticated user"""
-        self.client.force_authenticate(user=self.employer)
+
+    def test_list_products_as_admin(self):
+        """Test listing products as admin"""
+        self.client.force_authenticate(user=self.admin)
         response = self.client.get(self.url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('results', response.data)
-    
-    def test_list_products_unauthenticated(self):
-        """Test listing products without authentication (should fail)"""
+
+    def test_list_products_as_assistant(self):
+        """Test listing products as assistant"""
+        self.client.force_authenticate(user=self.assistant)
         response = self.client.get(self.url)
         
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-    
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('results', response.data)
+
+    def test_list_products_as_employer(self):
+        """Test listing products as employer (should fail)"""
+        self.client.force_authenticate(user=self.employer)
+        response = self.client.get(self.url)
+        
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_create_product_as_admin(self):
         """Test creating product as admin"""
         self.client.force_authenticate(user=self.admin)
@@ -293,7 +308,20 @@ class ProductViewSetTests(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Product.objects.count(), 2)
-    
+
+    def test_create_product_as_assistant(self):
+        """Test creating product as assistant (should work)"""
+        self.client.force_authenticate(user=self.assistant)
+        data = {
+            'name': 'New Product Assistant',
+            'quantity': 50
+        }
+        
+        response = self.client.post(self.url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Product.objects.count(), 2)
+
     def test_create_product_as_employer(self):
         """Test creating product as employer (should fail)"""
         self.client.force_authenticate(user=self.employer)
@@ -305,33 +333,7 @@ class ProductViewSetTests(APITestCase):
         response = self.client.post(self.url, data, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-    
-    def test_create_product_with_negative_quantity(self):
-        """Test creating product with negative quantity"""
-        self.client.force_authenticate(user=self.admin)
-        data = {
-            'name': 'Invalid Product',
-            'quantity': -10
-        }
-        
-        response = self.client.post(self.url, data, format='json')
-        
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-    
-    def test_create_product_selling_price_less_than_buying(self):
-        """Test creating product with selling price < buying price"""
-        self.client.force_authenticate(user=self.admin)
-        data = {
-            'name': 'Invalid Price Product',
-            'quantity': 10,
-            'buying_price': '100.00',
-            'selling_price': '50.00'
-        }
-        
-        response = self.client.post(self.url, data, format='json')
-        
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-    
+
     def test_update_product_as_admin(self):
         """Test updating product as admin"""
         self.client.force_authenticate(user=self.admin)
@@ -346,7 +348,22 @@ class ProductViewSetTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.product.refresh_from_db()
         self.assertEqual(self.product.name, 'Updated Product')
-    
+
+    def test_update_product_as_assistant(self):
+        """Test updating product as assistant (should work)"""
+        self.client.force_authenticate(user=self.assistant)
+        url = reverse('products-detail', kwargs={'pk': self.product.id})
+        data = {
+            'name': 'Updated Product Assistant',
+            'quantity': 200
+        }
+        
+        response = self.client.patch(url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.name, 'Updated Product Assistant')
+
     def test_delete_product_as_admin(self):
         """Test deleting product as admin"""
         self.client.force_authenticate(user=self.admin)
@@ -356,9 +373,25 @@ class ProductViewSetTests(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertEqual(Product.objects.count(), 0)
-    
-    def test_adjust_stock_endpoint(self):
-        """Test adjust stock custom action"""
+
+    def test_delete_product_as_assistant(self):
+        """Test deleting product as assistant (should work)"""
+        # Create a separate product for assistant to delete
+        product_to_delete = Product.objects.create(
+            name='Product to Delete',
+            quantity=10
+        )
+        
+        self.client.force_authenticate(user=self.assistant)
+        url = reverse('products-detail', kwargs={'pk': product_to_delete.id})
+        
+        response = self.client.delete(url)
+        
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(Product.objects.count(), 1)  # Only the original product remains
+
+    def test_adjust_stock_as_admin(self):
+        """Test adjust stock custom action as admin"""
         self.client.force_authenticate(user=self.admin)
         url = reverse('products-adjust-stock', kwargs={'pk': self.product.id})
         data = {
@@ -371,37 +404,122 @@ class ProductViewSetTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.product.refresh_from_db()
         self.assertEqual(self.product.quantity, 120)
-    
-    def test_low_stock_endpoint(self):
-        """Test low stock custom action"""
+
+    def test_adjust_stock_as_assistant(self):
+        """Test adjust stock custom action as assistant (should work)"""
+        self.client.force_authenticate(user=self.assistant)
+        url = reverse('products-adjust-stock', kwargs={'pk': self.product.id})
+        data = {
+            'quantity': 30,
+            'operation': 'subtract'
+        }
+        
+        response = self.client.post(url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 70)
+
+    def test_adjust_stock_as_employer(self):
+        """Test adjust stock custom action as employer (should fail)"""
+        self.client.force_authenticate(user=self.employer)
+        url = reverse('products-adjust-stock', kwargs={'pk': self.product.id})
+        data = {
+            'quantity': 10,
+            'operation': 'add'
+        }
+        
+        response = self.client.post(url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_low_stock_endpoint_as_admin(self):
+        """Test low stock custom action as admin"""
         Product.objects.create(
             name='Low Stock Product',
             quantity=5,
             reorder_threshold=10
         )
         
-        self.client.force_authenticate(user=self.employer)
+        self.client.force_authenticate(user=self.admin)
         url = reverse('products-low-stock')
         
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertGreater(response.data['count'], 0)
-    
-    def test_out_of_stock_endpoint(self):
-        """Test out of stock custom action"""
+
+    def test_low_stock_endpoint_as_assistant(self):
+        """Test low stock custom action as assistant"""
+        Product.objects.create(
+            name='Low Stock Product',
+            quantity=5,
+            reorder_threshold=10
+        )
+        
+        self.client.force_authenticate(user=self.assistant)
+        url = reverse('products-low-stock')
+        
+        response = self.client.get(url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreater(response.data['count'], 0)
+
+    def test_out_of_stock_endpoint_as_admin(self):
+        """Test out of stock custom action as admin"""
         Product.objects.create(
             name='Out of Stock Product',
             quantity=0
         )
         
-        self.client.force_authenticate(user=self.employer)
+        self.client.force_authenticate(user=self.admin)
         url = reverse('products-out-of-stock')
         
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['count'], 1)
+
+    def test_out_of_stock_endpoint_as_assistant(self):
+        """Test out of stock custom action as assistant"""
+        Product.objects.create(
+            name='Out of Stock Product',
+            quantity=0
+        )
+        
+        self.client.force_authenticate(user=self.assistant)
+        url = reverse('products-out-of-stock')
+        
+        response = self.client.get(url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+
+    def test_create_product_with_negative_quantity(self):
+        """Test creating product with negative quantity"""
+        self.client.force_authenticate(user=self.admin)
+        data = {
+            'name': 'Invalid Product',
+            'quantity': -10
+        }
+        
+        response = self.client.post(self.url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_product_selling_price_less_than_buying(self):
+        """Test creating product with selling price < buying price"""
+        self.client.force_authenticate(user=self.admin)
+        data = {
+            'name': 'Invalid Price Product',
+            'quantity': 10,
+            'buying_price': '100.00',
+            'selling_price': '50.00'
+        }
+        
+        response = self.client.post(self.url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 class ProductEdgeCaseTests(APITestCase):
@@ -415,6 +533,12 @@ class ProductEdgeCaseTests(APITestCase):
             username='admin',
             password='pass123',
             role=User.ROLE_ADMIN
+        )
+        
+        self.assistant = User.objects.create_user(
+            username='assistant',
+            password='pass123',
+            role=User.ROLE_ASSISTANT
         )
         
         self.url = reverse('products-list')
@@ -440,7 +564,7 @@ class ProductEdgeCaseTests(APITestCase):
     
     def test_create_product_with_very_large_quantity(self):
         """Test creating product with very large quantity"""
-        self.client.force_authenticate(user=self.admin)
+        self.client.force_authenticate(user=self.assistant)
         data = {
             'name': 'Large Quantity Product',
             'quantity': 999999999

@@ -52,6 +52,7 @@ class InvoiceModelTests(TestCase):
             selling_price=Decimal('75.00')
         )
     
+    
     def test_create_invoice_draft(self):
         """Test creating invoice in DRAFT status"""
         invoice = Invoice.objects.create(
@@ -200,18 +201,27 @@ class InvoiceModelTests(TestCase):
             unit_price=Decimal('75.00')
         )
         
+        # Verify initial stock
+        self.assertEqual(self.product.quantity, 100)
+        
         invoice.issue()
         
-        # Stock should be 75
+        # Stock should be 75 (100-25)
         self.product.refresh_from_db()
         self.assertEqual(self.product.quantity, 75)
         
         # Delete invoice
+        invoice_id = invoice.id
         invoice.delete()
+        
+        # Verify invoice is deleted
+        self.assertFalse(Invoice.objects.filter(id=invoice_id).exists())
         
         # Stock should be restored to 100
         self.product.refresh_from_db()
-        self.assertEqual(self.product.quantity, 100)
+        self.assertEqual(self.product.quantity, 100, 
+                        f"Stock not restored properly. Expected 100, got {self.product.quantity}")
+
     
     def test_invoice_cannot_mark_paid_from_draft(self):
         """Test cannot mark DRAFT invoice as paid"""
@@ -254,7 +264,7 @@ class InvoiceLineModelTests(TestCase):
             name='Test Project',
             client=self.client,
             start_date=date.today(),
-            created_by=self.user
+            created_by=self.user  # Fixed: use self.user
         )
         
         self.product = Product.objects.create(
@@ -289,7 +299,7 @@ class InvoiceLineModelTests(TestCase):
         """Test creating line on ISSUED invoice - immediate stock change"""
         invoice = Invoice.objects.create(
             project=self.project,
-            created_by=self.admin
+            created_by=self.user
         )
         
         # First line - subtracts 20
@@ -302,7 +312,6 @@ class InvoiceLineModelTests(TestCase):
         
         invoice.issue()  # Stock becomes 80 (100-20)
         
-        initial_stock = self.product.quantity  # This is 80, not 100!
         
         # Add second line - subtracts 15 more
         InvoiceLine.objects.create(

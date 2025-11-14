@@ -15,6 +15,7 @@ from apps.core.mixins import (
     AdminWritePermissionMixin
 )
 from apps.core.pagination import StaticPagination
+from apps.core.permissions import IsAdminOrAssistant  # Add this import
 from .models import Invoice, InvoiceLine
 from .serializers import (
     InvoiceSerializer,
@@ -37,7 +38,7 @@ class InvoiceViewSet(
     
     Permissions:
         - List/Retrieve: Authenticated users
-        - Create/Update/Delete: Admins only
+        - Create/Update/Delete: Admins and Assistants only
     
     Custom Actions:
         - update_status: Change invoice status (issue/mark_paid/revert_to_draft)
@@ -62,6 +63,13 @@ class InvoiceViewSet(
     ]
     ordering_fields = ['issued_date', 'due_date', 'total', 'created_at']
 
+    def get_permissions(self):
+        """Allow admins and assistants to modify, authenticated users to read"""
+        if self.action in ['list', 'retrieve', 'can_issue']:
+            from rest_framework.permissions import IsAuthenticated
+            return [IsAuthenticated()]
+        return [IsAdminOrAssistant()]  # Updated to include assistants
+
     def get_serializer_class(self):
         if self.action == 'create':
             return InvoiceCreateSerializer
@@ -78,7 +86,7 @@ class InvoiceViewSet(
         """
         if not instance.is_editable:
             from rest_framework.exceptions import ValidationError
-            raise ValidationError("Cannot delete a paid invoice")
+            raise ValidationError({"message": "Impossible de supprimer une facture payée"})
         
         instance.delete()
 
@@ -104,22 +112,27 @@ class InvoiceViewSet(
             data=request.data,
             context={'invoice': invoice}
         )
-        serializer.is_valid(raise_exception=True)
+        
+        if not serializer.is_valid():
+            return Response(
+                {"message": "Données de requête invalides"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         action_type = serializer.validated_data['action']
         
         try:
             if action_type == 'issue':
                 invoice.issue()
-                message = "Invoice issued successfully. Stock has been deducted."
+                message = "Facture émise avec succès. Stock déduit."
                 
             elif action_type == 'mark_paid':
                 invoice.mark_paid()
-                message = "Invoice marked as paid. No more edits allowed."
+                message = "Facture marquée comme payée. Aucune modification autorisée."
                 
             elif action_type == 'revert_to_draft':
                 invoice.revert_to_draft()
-                message = "Invoice reverted to draft. Stock has been restored."
+                message = "Facture revenue au brouillon. Stock restauré."
             
             return Response({
                 'message': message,
@@ -128,7 +141,7 @@ class InvoiceViewSet(
             
         except Exception as e:
             return Response(
-                {'detail': str(e)},
+                {"message": str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -154,7 +167,7 @@ class InvoiceViewSet(
         
         if not invoice.is_editable:
             return Response(
-                {'detail': 'Cannot add lines to a paid invoice'},
+                {"message": "Impossible d'ajouter des lignes à une facture payée"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -162,7 +175,14 @@ class InvoiceViewSet(
             data=request.data,
             context={'invoice': invoice}
         )
-        serializer.is_valid(raise_exception=True)
+        
+        if not serializer.is_valid():
+            # Convert serializer errors to French message format
+            error_message = self._get_serializer_error_message(serializer.errors)
+            return Response(
+                {"message": error_message},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         try:
             line = serializer.save(invoice=invoice)
@@ -172,10 +192,9 @@ class InvoiceViewSet(
             )
         except Exception as e:
             return Response(
-                {'detail': str(e)},
+                {"message": f"Erreur lors de l'ajout de la ligne: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
 
     @action(detail=True, methods=['post'], url_path='add-lines')
     @transaction.atomic
@@ -203,14 +222,14 @@ class InvoiceViewSet(
         
         if not invoice.is_editable:
             return Response(
-                {'detail': 'Cannot add lines to a paid invoice'},
+                {"message": "Impossible d'ajouter des lignes à une facture payée"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         lines_data = request.data
         if not isinstance(lines_data, list):
             return Response(
-                {'detail': 'Expected a list of line items'},
+                {"message": "Données attendues: une liste d'articles"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -228,15 +247,16 @@ class InvoiceViewSet(
                     line = serializer.save(invoice=invoice)
                     created_lines.append(line)
                 except Exception as e:
-                    errors.append(f"Line {index + 1}: {str(e)}")
+                    errors.append(f"Ligne {index + 1}: {str(e)}")
             else:
-                errors.append(f"Line {index + 1}: {serializer.errors}")
+                error_message = self._get_serializer_error_message(serializer.errors)
+                errors.append(f"Ligne {index + 1}: {error_message}")
         
         if errors:
             # If any errors occurred, rollback the transaction
             transaction.set_rollback(True)
             return Response(
-                {'detail': 'Some lines could not be created', 'errors': errors},
+                {"message": "Certaines lignes n'ont pas pu être créées", "errors": errors},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -265,6 +285,36 @@ class InvoiceViewSet(
             'total': float(invoice.total)
         })
 
+    def _get_serializer_error_message(self, errors):
+        """
+        Convert serializer errors to French message format.
+        """
+        if 'message' in errors:
+            return str(errors['message'])
+        
+        # Get first error and convert to French
+        for field, field_errors in errors.items():
+            if isinstance(field_errors, list):
+                error_text = str(field_errors[0])
+            else:
+                error_text = str(field_errors)
+            
+            # Translate common validation errors to French
+            if 'required' in error_text.lower():
+                return f"Champ {field} obligatoire manquant"
+            elif 'invalid' in error_text.lower():
+                return f"Donnée invalide pour {field}"
+            elif 'not exist' in error_text.lower():
+                return f"{field} n'existe pas"
+            elif 'positive' in error_text.lower():
+                return f"{field} doit être positif"
+            elif 'negative' in error_text.lower():
+                return f"{field} ne peut pas être négatif"
+            else:
+                return error_text
+        
+        return "Données invalides"
+
 
 class InvoiceLineViewSet(viewsets.ModelViewSet):
     """
@@ -281,8 +331,8 @@ class InvoiceLineViewSet(viewsets.ModelViewSet):
     pagination_class = StaticPagination
 
     def get_permissions(self):
-        from apps.core.permissions import IsAdmin
-        return [IsAdmin()]
+        """Allow admins and assistants to modify"""
+        return [IsAdminOrAssistant()]  # Updated to include assistants
 
     def get_queryset(self):
         """Filter lines by invoice if invoice_pk is provided"""
@@ -303,6 +353,22 @@ class InvoiceLineViewSet(viewsets.ModelViewSet):
                 pass
         return context
 
+    def handle_exception(self, exc):
+        """Override to return French error messages"""
+        from rest_framework.views import exception_handler
+        response = exception_handler(exc, self)
+        
+        if response is not None:
+            if hasattr(exc, 'detail'):
+                if isinstance(exc.detail, dict) and 'message' in exc.detail:
+                    response.data = exc.detail
+                else:
+                    response.data = {"message": str(exc.detail)}
+            else:
+                response.data = {"message": str(exc)}
+        
+        return response
+
     @transaction.atomic
     def perform_create(self, serializer):
         """Create line item and associate with invoice"""
@@ -311,7 +377,7 @@ class InvoiceLineViewSet(viewsets.ModelViewSet):
         
         if not invoice.is_editable:
             from rest_framework.exceptions import ValidationError
-            raise ValidationError("Cannot add lines to a paid invoice")
+            raise ValidationError({"message": "Impossible d'ajouter des lignes à une facture payée"})
         
         serializer.save(invoice=invoice)
 
@@ -320,7 +386,7 @@ class InvoiceLineViewSet(viewsets.ModelViewSet):
         """Update line item"""
         if not serializer.instance.invoice.is_editable:
             from rest_framework.exceptions import ValidationError
-            raise ValidationError("Cannot update lines on a paid invoice")
+            raise ValidationError({"message": "Impossible de modifier les lignes d'une facture payée"})
         
         serializer.save()
 
@@ -329,6 +395,6 @@ class InvoiceLineViewSet(viewsets.ModelViewSet):
         """Delete line item"""
         if not instance.invoice.is_editable:
             from rest_framework.exceptions import ValidationError
-            raise ValidationError("Cannot delete lines from a paid invoice")
+            raise ValidationError({"message": "Impossible de supprimer les lignes d'une facture payée"})
         
         instance.delete()

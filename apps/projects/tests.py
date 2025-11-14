@@ -248,7 +248,6 @@ class MaintenanceModelTests(TestCase):
             project=self.project,
             start_date=date.today() + timedelta(days=30),
             end_date=date.today() + timedelta(days=30),
-            maintenance_number=1,
             maintenance_type=Maintenance.TYPE_MANUAL
         )
         
@@ -261,7 +260,7 @@ class MaintenanceModelTests(TestCase):
             project=self.project,
             start_date=date.today() - timedelta(days=10),
             end_date=date.today() - timedelta(days=5),
-            maintenance_number=1
+            maintenance_type=Maintenance.TYPE_MANUAL
         )
         
         self.assertTrue(maintenance.is_overdue)
@@ -272,7 +271,7 @@ class MaintenanceModelTests(TestCase):
             project=self.project,
             start_date=date.today() + timedelta(days=15),
             end_date=date.today() + timedelta(days=15),
-            maintenance_number=1
+            maintenance_type=Maintenance.TYPE_MANUAL
         )
         
         self.assertEqual(maintenance.days_until_maintenance, 15)
@@ -483,15 +482,21 @@ class ProjectEdgeCaseTests(APITestCase):
         data = {
             'name': 'Ongoing Project',
             'client': self.test_client.id,
-            'start_date': '2025-01-01'
+            'start_date': '2025-01-01',
+            'assigned_employers': []  # Add empty list for assigned_employers
         }
         
         response = self.client_api.post(self.url, data, format='json')
+        
+        # Debug: print the response data to see what error we're getting
+        if response.status_code != status.HTTP_201_CREATED:
+            print(f"Error response: {response.data}")
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         project = Project.objects.get(name='Ongoing Project')
         # end_date should be set to start_date by model save
         self.assertEqual(project.end_date, project.start_date)
+
     
     def test_create_project_with_zero_maintenance_interval(self):
         """Test creating project with zero maintenance interval"""

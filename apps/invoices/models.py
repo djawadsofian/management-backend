@@ -249,20 +249,20 @@ class Invoice(TimeStampedModel):
         Returns (bool, str) - success flag and message
         """
         if self.status != self.STATUS_DRAFT:
-            return False, "Invoice is not in draft status"
+            return False, "La facture n'est pas en statut brouillon"
         
         if not self.lines.exists():
-            return False, "Invoice has no line items"
+            return False, "La facture n'a aucun article"
         
         if self.total <= 0:
-            return False, "Invoice total must be greater than 0"
+            return False, "Le total de la facture doit être supérieur à 0"
         
         # Check if all products have sufficient stock
         for line in self.lines.all():
             if line.product and line.product.quantity < line.quantity:
-                return False, f"Insufficient stock for {line.product.name}"
+                return False, f"Stock insuffisant pour {line.product.name}"
         
-        return True, "Invoice can be issued"
+        return True, "La facture peut être émise"
 
     @transaction.atomic
     def issue(self):
@@ -291,7 +291,7 @@ class Invoice(TimeStampedModel):
     def mark_paid(self):
         """Mark invoice as paid (locks editing)"""
         if self.status not in [self.STATUS_ISSUED]:
-            raise ValidationError("Only issued invoices can be marked as paid")
+            raise ValidationError("Seules les factures émises peuvent être marquées comme payées")
         
         self.status = self.STATUS_PAID
         self.save(update_fields=['status', 'updated_at'])
@@ -303,7 +303,7 @@ class Invoice(TimeStampedModel):
         Restores all stock that was deducted.
         """
         if self.status != self.STATUS_ISSUED:
-            raise ValidationError("Only issued invoices can be reverted to draft")
+            raise ValidationError("Seules les factures émises peuvent revenir au brouillon")
         
         # Restore stock for all lines
         for line in self.lines.all():
@@ -332,6 +332,8 @@ class Invoice(TimeStampedModel):
                     )
         
         super().delete(*args, **kwargs)
+
+
 
 
 class InvoiceLine(TimeStampedModel):
@@ -389,7 +391,7 @@ class InvoiceLine(TimeStampedModel):
         """Validate before save"""
         # Check if invoice is editable
         if self.invoice and not self.invoice.is_editable:
-            raise ValidationError("Cannot modify lines on a paid invoice")
+            raise ValidationError("Impossible de modifier les lignes d'une facture payée")
         
         # Check stock availability if invoice is issued
         if self.invoice and self.invoice.is_issued and self.product:
@@ -403,15 +405,16 @@ class InvoiceLine(TimeStampedModel):
                     # Need more stock
                     if self.product.quantity < qty_increase:
                         raise ValidationError(
-                            f"Insufficient stock for {self.product.name}. "
-                            f"Available: {self.product.quantity}, Additional needed: {qty_increase}"
+                            f"Stock insuffisant pour {self.product.name}. "
+                            f"Disponible: {self.product.quantity}, Nécessaire supplémentaire: {qty_increase}"
                         )
             else:  # New line
                 if self.product.quantity < float(self.quantity):
                     raise ValidationError(
-                        f"Insufficient stock for {self.product.name}. "
-                        f"Available: {self.product.quantity}, Requested: {self.quantity}"
+                        f"Stock insuffisant pour {self.product.name}. "
+                        f"Disponible: {self.product.quantity}, Demandé: {self.quantity}"
                     )
+
 
     @transaction.atomic
     def save(self, *args, **kwargs):

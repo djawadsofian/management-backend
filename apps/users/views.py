@@ -65,8 +65,7 @@ class EmployerViewSet(BaseUserViewSet):
         user = self.get_object()
         user.is_active = False
         user.save(update_fields=['is_active'])
-        serializer = self.get_serializer(user)
-        return Response(serializer.data)
+        return Response({"message": "Employer désactivé"})
 
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
@@ -74,9 +73,7 @@ class EmployerViewSet(BaseUserViewSet):
         user = self.get_object()
         user.is_active = True
         user.save(update_fields=['is_active'])
-        serializer = self.get_serializer(user)
-        return Response(serializer.data)
-
+        return Response({"message": "Employer activé"})
 
 class AssistantViewSet(BaseUserViewSet):
     """
@@ -96,6 +93,8 @@ class AssistantViewSet(BaseUserViewSet):
     queryset = CustomUser.objects.filter(role=CustomUser.ROLE_ASSISTANT)
     permission_classes = [IsAdmin]
     create_serializer_class = AssistantCreateSerializer
+
+    
     @action(detail=True, methods=['patch'])
     def update_permissions(self, request, pk=None):
         """Update price permissions for assistant"""
@@ -104,7 +103,7 @@ class AssistantViewSet(BaseUserViewSet):
         # Only admins can update permissions
         if not request.user.is_admin():
             return Response(
-                {'detail': 'Only admins can update permissions'},
+                {"message": "Accès non autorisé"},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -116,7 +115,7 @@ class AssistantViewSet(BaseUserViewSet):
         
         if not update_data:
             return Response(
-                {'detail': 'No valid permission fields provided'},
+                {"message": "Aucune permission valide"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -125,8 +124,7 @@ class AssistantViewSet(BaseUserViewSet):
             setattr(user, field, value)
         
         user.save(update_fields=update_data.keys())
-        serializer = self.get_serializer(user)
-        return Response(serializer.data)
+        return Response({"message": "Permissions modifiées"})
 
 
 

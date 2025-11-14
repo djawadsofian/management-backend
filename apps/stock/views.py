@@ -6,14 +6,15 @@ Removed redundant code and improved organization.
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from django.db.models import F
 
 from apps.core.mixins import (
     StandardFilterMixin,
     TimestampOrderingMixin,
-    AdminWritePermissionMixin
 )
 from apps.core.pagination import StaticPagination
+from apps.core.permissions import IsAdminOrAssistant
 from .models import Product
 from .serializers import ProductSerializer
 from .services import StockService
@@ -22,7 +23,6 @@ from .services import StockService
 class ProductViewSet(
     StandardFilterMixin,
     TimestampOrderingMixin,
-    AdminWritePermissionMixin,
     viewsets.ModelViewSet
 ):
     """
@@ -44,12 +44,15 @@ class ProductViewSet(
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
     pagination_class = StaticPagination
+    permission_classes =[IsAdminOrAssistant]
     
     # Filter/Search/Order configuration
     filterset_fields = ['sku', 'unit']
     search_fields = ['name', 'sku']
     ordering_fields = ['name', 'quantity', 'reorder_threshold', 'buying_price', 'selling_price']
     ordering = ['name']
+
+  
 
     @action(detail=False, methods=['get'], url_path='low-stock')
     def low_stock(self, request):
@@ -104,7 +107,7 @@ class ProductViewSet(
         
         if not quantity:
             return Response(
-                {'error': 'Quantity is required'},
+                {'message': 'Quantité requise'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -119,6 +122,6 @@ class ProductViewSet(
         
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'message': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
