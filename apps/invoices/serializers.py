@@ -2,6 +2,7 @@
 from rest_framework import serializers
 from .models import Invoice, InvoiceLine
 from apps.stock.serializers import ProductSerializer
+from apps.clients.serializers import ClientSerializer
 
 
 class InvoiceLineSerializer(serializers.ModelSerializer):
@@ -50,6 +51,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.name', read_only=True)
     client_name = serializers.CharField(source='project.client.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    clients = ClientSerializer(many=True, read_only=True)
     
     # Status flags
     is_draft = serializers.BooleanField(read_only=True)
