@@ -269,6 +269,7 @@ def my_calendar(request):
                 
                 events.append({
                     'id': f'maintenance-{maintenance.id}',
+                    'title': f'Maintenance de: {project.name}',
                     'start': maintenance.start_date.isoformat(),
                     'end': maintenance.end_date.isoformat(),
                     'type': 'maintenance',
