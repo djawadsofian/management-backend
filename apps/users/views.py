@@ -94,7 +94,7 @@ class AssistantViewSet(BaseUserViewSet):
     permission_classes = [IsAdmin]
     create_serializer_class = AssistantCreateSerializer
 
-    
+
     @action(detail=True, methods=['patch'])
     def update_permissions(self, request, pk=None):
         """Update price permissions for assistant"""
@@ -279,7 +279,6 @@ def my_calendar(request):
                     'client_name': project.client.name,
                     'client_address': client_address,
                     'maintenance_id': maintenance.id,
-                    'maintenance_number': maintenance.maintenance_number,
                     'is_overdue': maintenance.is_overdue,
                     'days_until_maintenance': maintenance.days_until_maintenance,
                 })
