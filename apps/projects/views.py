@@ -60,6 +60,30 @@ class ProjectViewSet(
         if cities:
             queryset = queryset.filter(client__address__city__in=cities)
         
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            # Filter based on status logic
+            today = timezone.now().date()
+            
+            if status_filter == Project.STATUS_DRAFT:
+                queryset = queryset.filter(is_verified=False)
+            elif status_filter == Project.STATUS_UPCOMING:
+                queryset = queryset.filter(
+                    is_verified=True,
+                    start_date__gt=today
+                )
+            elif status_filter == Project.STATUS_ACTIVE:
+                queryset = queryset.filter(
+                    is_verified=True,
+                    start_date__lte=today,
+                    end_date__gte=today
+                )
+            elif status_filter == Project.STATUS_COMPLETED:
+                queryset = queryset.filter(
+                    is_verified=True,
+                    end_date__lt=today
+                )
+        
         return queryset
 
 
