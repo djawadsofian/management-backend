@@ -51,7 +51,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.name', read_only=True)
     client_name = serializers.CharField(source='project.client.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
-    clients = ClientSerializer(many=True, read_only=True)
+    client = ClientSerializer(read_only=True)
     
     # Status flags
     is_draft = serializers.BooleanField(read_only=True)
@@ -63,7 +63,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
         fields = [
-            'id', 'project', 'project_name', 'client_name',
+            'id', 'project', 'project_name', 'client_name','client',
             'bon_de_commande', 'bon_de_versement', 'bon_de_reception', 'facture',
             'issued_date', 'due_date', 
             'subtotal', 'tva', 'tax_amount', 'total', 'deposit_price', 
