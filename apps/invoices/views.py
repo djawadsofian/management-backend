@@ -56,7 +56,7 @@ class InvoiceViewSet(
     pagination_class = StaticPagination
     
     # Filtering configuration
-    filterset_fields = ['status', 'project', 'created_by']
+    filterset_fields = ['status', 'project', 'created_by','facture']
     search_fields = [
         'bon_de_commande', 'bon_de_versement',
         'bon_de_reception', 'facture', 'project__name'
