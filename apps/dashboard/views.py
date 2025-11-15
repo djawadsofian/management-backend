@@ -446,16 +446,21 @@ class FinancialAnalyticsView(APIView):
     
     def get(self, request):
         # Get date range from params
-        range_param = request.GET.get('range', 'month')
+        start_date_param = request.GET.get('start_date')
         today = timezone.now().date()
         
-        if range_param == 'week':
-            start_date = today - timedelta(days=7)
-            cache_key = 'financial_analytics_week'
-        elif range_param == 'year':
-            start_date = today - timedelta(days=365)
-            cache_key = 'financial_analytics_year'
+        if start_date_param:
+            try:
+                # Parse the provided start date
+                start_date = datetime.strptime(start_date_param, '%Y-%m-%d').date()
+                # Generate cache key based on the specific start date
+                cache_key = f'financial_analytics_{start_date.isoformat()}'
+            except (ValueError, TypeError):
+                # Fallback to default if parsing fails
+                start_date = today - timedelta(days=30)
+                cache_key = 'financial_analytics_month'
         else:
+            # Default to last month if no start_date provided
             start_date = today - timedelta(days=30)
             cache_key = 'financial_analytics_month'
         
@@ -546,7 +551,7 @@ class FinancialAnalyticsView(APIView):
             'date_range': {
                 'start': start_date.isoformat(),
                 'end': today.isoformat(),
-                'range': range_param
+                'range': 'custom' if start_date_param else 'month'
             },
             'revenue_trend': list(revenue_trend),
             'top_revenue_clients': top_revenue_data,
@@ -557,14 +562,18 @@ class FinancialAnalyticsView(APIView):
                     (payment_stats['total_paid'] / payment_stats['total_issued'] * 100)
                     if payment_stats['total_issued'] else 0,
                     1
-                )
+                ),
+                'avg_days_to_payment': round(payment_stats['avg_days_to_payment'] or 0, 1)
             },
             'aging_analysis': {
                 'current': {
                     'count': aging_analysis['current'],
                     'amount': float(aging_analysis['current_amount'] or 0)
                 },
-                'overdue_1_30_days': aging_analysis['overdue_1_30'],
+                'overdue_1_30_days': {
+                    'count': aging_analysis['overdue_1_30'],
+                    'amount': float(aging_analysis['overdue_amount'] or 0)  # Note: This is total overdue amount
+                },
                 'overdue_31_60_days': aging_analysis['overdue_31_60'],
                 'overdue_60_plus_days': aging_analysis['overdue_60_plus'],
                 'total_overdue_amount': float(aging_analysis['overdue_amount'] or 0)
