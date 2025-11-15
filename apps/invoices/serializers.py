@@ -51,7 +51,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.name', read_only=True)
     client_name = serializers.CharField(source='project.client.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
-    client = ClientSerializer(read_only=True)
+    client = ClientSerializer(source='project.client', read_only=True) 
     
     # Status flags
     is_draft = serializers.BooleanField(read_only=True)

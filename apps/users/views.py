@@ -180,7 +180,7 @@ def my_calendar(request):
     
     # Address filtering parameters
     province = request.query_params.get('province', '').strip()
-    city = request.query_params.get('city', '').strip()
+    city = request.query_params.getlist('city')  
     postal_code = request.query_params.get('postal_code', '').strip()
     
     # Determine which projects the user can see
@@ -211,7 +211,7 @@ def my_calendar(request):
         projects = projects.filter(client__address__province__iexact=province)
     
     if city:
-        projects = projects.filter(client__address__city__icontains=city)
+        projects = projects.filter(client__address__city__in=city)
     
     if postal_code:
         projects = projects.filter(client__address__postal_code=postal_code)

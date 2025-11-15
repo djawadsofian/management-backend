@@ -24,9 +24,27 @@ class ClientViewSet(viewsets.ModelViewSet):
     filter_backends = [filters.DjangoFilterBackend, drf_filters.SearchFilter, drf_filters.OrderingFilter]
     filterset_class = ClientFilter  # Use custom filter class
     pagination_class = StaticPagination
-    search_fields = ['name', 'email', 'phone_number']
+    search_fields = [
+    'name', 
+    'email', 
+    'phone_number',
+    'address__province',    # Search in province
+    'address__city',        # Search in city  
+    'address__postal_code', # Search in postal code
+    'address__street',      # Search in street (if you have this field)
+    ]   
     ordering_fields = ['name', 'created_at']
     ordering = ['-created_at']
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        
+        # Handle multiple city filter
+        cities = self.request.query_params.getlist('city')
+        if cities:
+            queryset = queryset.filter(address__city__in=cities)
+        
+        return queryset
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:

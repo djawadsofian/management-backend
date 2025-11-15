@@ -59,9 +59,23 @@ class InvoiceViewSet(
     filterset_fields = ['status', 'project', 'created_by','facture']
     search_fields = [
         'bon_de_commande', 'bon_de_versement',
-        'bon_de_reception', 'facture', 'project__name'
+        'bon_de_reception', 'facture', 'project__name',
+        'project__client__name',  # Client name
+        'project__client__address__province',  # Client province
+        'project__client__address__city',  # Client city
+        'project__client__address__postal_code',  # Client postal code
     ]
     ordering_fields = ['issued_date', 'due_date', 'total', 'created_at']
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        
+        # Handle multiple city filter
+        cities = self.request.query_params.getlist('city')
+        if cities:
+            queryset = queryset.filter(project__client__address__city__in=cities)
+        
+        return queryset
 
     def get_permissions(self):
         """Allow admins and assistants to modify, authenticated users to read"""

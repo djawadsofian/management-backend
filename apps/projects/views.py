@@ -38,6 +38,9 @@ class ProjectViewSet(
     """
     ViewSet for managing projects.
     """
+
+
+   
     queryset = Project.objects.select_related(
         'client', 'verified_by', 'created_by'
     ).prefetch_related('assigned_employers', 'maintenances')
@@ -48,6 +51,19 @@ class ProjectViewSet(
     filterset_fields = ['start_date', 'end_date', 'is_verified', 'client', 'invoices__facture']
     search_fields = ['name', 'client__name', 'description', 'invoices__facture','client__address__province', 'client__address__city','client__address__postal_code'] 
     ordering_fields = ['start_date', 'created_at', 'name']
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        
+        # Handle multiple city filter
+        cities = self.request.query_params.getlist('city')
+        if cities:
+            queryset = queryset.filter(client__address__city__in=cities)
+        
+        return queryset
+
+
+   
 
     def get_serializer_class(self):
         if self.action == 'list':
