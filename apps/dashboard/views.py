@@ -655,7 +655,7 @@ class InventoryAnalyticsView(APIView):
                 ((F('selling_price') - F('buying_price')) / F('buying_price')) * 100,
                 output_field=DecimalField(max_digits=5, decimal_places=2)
             ),
-            potential_profit=ExpressionWrapper(
+            potential_profit_value=ExpressionWrapper(  # Change the name
                 F('quantity') * (F('selling_price') - F('buying_price')),
                 output_field=DecimalField(max_digits=15, decimal_places=2)
             )
@@ -669,7 +669,7 @@ class InventoryAnalyticsView(APIView):
                 'selling_price': float(p.selling_price),
                 'profit_margin': float(p.profit_margin),
                 'quantity': p.quantity,
-                'potential_profit': float(p.potential_profit)
+                'potential_profit': float(p.potential_profit_value)  # Use the new name
             }
             for p in profitability
         ]
@@ -781,11 +781,10 @@ class RecentActivityView(APIView):
             activities.append({
                 'type': 'maintenance',
                 'id': maintenance.id,
-                'title': f"Maintenance #{maintenance.maintenance_number}: {maintenance.project.name}",
+                'title': f"Maintenance de : {maintenance.project.name}",
                 'description': f"Project: {maintenance.project.name}",
                 'start_date': maintenance.start_date.isoformat(),
                 'end_date': maintenance.end_date.isoformat(),
-                'maintenance_number': maintenance.maintenance_number,
                 'timestamp': maintenance.created_at.isoformat()
             })
         
