@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from django.core.exceptions import ValidationError
+from apps.core.middleware import get_current_user
 
 
 from apps.core.mixins import (
@@ -161,11 +162,25 @@ class ProjectViewSet(
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    def perform_update(self, serializer):
+        """Track who modified the project"""
+        instance = serializer.save()
+        # Set user for signal handler
+        instance._modified_by = get_current_user() or self.request.user
+        return instance
+
+    def perform_destroy(self, instance):
+        """Track who deleted the project"""
+        # Set user for signal handler
+        instance._deleted_by = get_current_user() or self.request.user
+        instance.delete()
+
     @action(detail=True, methods=['post'])
     @transaction.atomic
     def assign(self, request, pk=None):
         """
         Assign employers to project.
+        UPDATED to trigger assignment notifications
         """
         from apps.users.models import CustomUser
         
@@ -179,7 +194,7 @@ class ProjectViewSet(
             )
         
         try:
-            # Only assign users with EMPLOYER role
+            # Get employers to assign
             users = CustomUser.objects.filter(
                 id__in=user_ids,
                 role=CustomUser.ROLE_EMPLOYER
@@ -191,7 +206,18 @@ class ProjectViewSet(
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            # Get currently assigned employers
+            current_employers = set(project.assigned_employers.values_list('id', flat=True))
+            
+            # Add new employers
             project.assigned_employers.add(*users)
+            
+            # Find newly assigned employers (for notification)
+            new_employer_ids = set(user_ids) - current_employers
+            if new_employer_ids and project.is_verified:
+                new_employers = CustomUser.objects.filter(id__in=new_employer_ids)
+                # Notification will be sent by m2m_changed signal
+                
             serializer = self.get_serializer(project)
             return Response(serializer.data)
         except Exception as e:
@@ -310,3 +336,23 @@ class MaintenanceViewSet(
                 {"message": f"Erreur lors de la mise à jour de la maintenance: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+    def perform_create(self, serializer):
+        """Track who created the maintenance"""
+        instance = serializer.save()
+        # Set user for signal handler
+        instance._created_by = get_current_user() or self.request.user
+        return instance
+
+    def perform_update(self, serializer):
+        """Track who modified the maintenance"""
+        instance = serializer.save()
+        # Set user for signal handler
+        instance._modified_by = get_current_user() or self.request.user
+        return instance
+
+    def perform_destroy(self, instance):
+        """Track who deleted the maintenance"""
+        # Set user for signal handler
+        instance._deleted_by = get_current_user() or self.request.user
+        instance.delete()

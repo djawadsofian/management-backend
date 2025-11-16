@@ -42,4 +42,5 @@ urlpatterns = [
     path('api/', include('apps.invoices.urls')),
     path('api/', include('apps.dashboard.urls')),
     path('api/stock/', include('apps.stock.urls')),
+    path('api/', include('apps.notifications.urls')),
 ]

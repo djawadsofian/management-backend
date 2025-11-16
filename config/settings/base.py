@@ -22,6 +22,7 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
 
 # Application definition
 INSTALLED_APPS = [
+    'django_crontab',
     # Django apps
     'django.contrib.admin',
     'django.contrib.auth',
@@ -44,6 +45,11 @@ INSTALLED_APPS = [
     'apps.projects',
     'apps.invoices',
     'apps.dashboard',
+    'apps.notifications', 
+]
+
+CRONJOBS = [
+    ('0 * * * *', 'apps.notifications.management.commands.check_upcoming_events.Command.handle'),
 ]
 
 MIDDLEWARE = [
@@ -54,6 +60,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'apps.core.middleware.CurrentUserMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
