@@ -2,7 +2,7 @@
 """
 Signal handlers for Project and Maintenance models
 """
-from django.db.models.signals import post_save, pre_delete, m2m_changed
+from django.db.models.signals import post_save, pre_delete, pre_save, m2m_changed
 from django.dispatch import receiver
 from apps.projects.models import Project, Maintenance
 from apps.notifications.services import NotificationService
@@ -13,8 +13,50 @@ logger = logging.getLogger(__name__)
 
 # ========== PROJECT SIGNALS ==========
 
+
+@receiver(pre_save, sender=Project)
+def track_verification_state(sender, instance, **kwargs):
+    """
+    Track previous verification state before save
+    """
+    if instance.pk:
+        try:
+            previous = Project.objects.get(pk=instance.pk)
+            instance._previous_is_verified = previous.is_verified
+        except Project.DoesNotExist:
+            instance._previous_is_verified = False
+    else:
+        instance._previous_is_verified = False
+
+@receiver(post_save, sender=Project)
+def project_verified(sender, instance, created, **kwargs):
+    """
+    Notify assigned employers when project is verified
+    """
+    # For new projects that are created as verified
+    if created and instance.is_verified and instance.assigned_employers.exists():
+        from apps.notifications.services import NotificationService
+        NotificationService.notify_project_assigned(instance, instance.assigned_employers.all())
+        logger.info(f"Notified {instance.assigned_employers.count()} employers about new verified project: {instance.name}")
+    
+    # For existing projects that are being verified
+    elif not created and hasattr(instance, '_previous_is_verified'):
+        previous_verified = instance._previous_is_verified
+        current_verified = instance.is_verified
+        
+        # Check if project was just verified
+        if not previous_verified and current_verified and instance.assigned_employers.exists():
+            from apps.notifications.services import NotificationService
+            NotificationService.notify_project_assigned(instance, instance.assigned_employers.all())
+            logger.info(f"Notified {instance.assigned_employers.count()} employers about project verification: {instance.name}")
+
+
+
+
+
+
 @receiver(m2m_changed, sender=Project.assigned_employers.through)
-def project_employers_changed(sender, instance, action, pk_set, **kwargs):
+def project_employers_changed(sender, instance, action, pk_set, **kwargs ):
     """
     Notify employers when they are assigned to a project
     """

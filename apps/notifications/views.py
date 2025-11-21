@@ -43,7 +43,9 @@ class NotificationViewSet(StandardFilterMixin, viewsets.ReadOnlyModelViewSet):
     ordering = ['-created_at']
     
     def get_queryset(self):
-        """Return only notifications for current user"""
+        if getattr(self, "swagger_fake_view", False):
+            return Notification.objects.none()
+
         return Notification.objects.filter(
             recipient=self.request.user
         ).select_related(
@@ -51,7 +53,7 @@ class NotificationViewSet(StandardFilterMixin, viewsets.ReadOnlyModelViewSet):
             'related_project__client',
             'related_maintenance'
         ).order_by('-created_at')
-    
+        
     @action(detail=True, methods=['post'])
     def mark_read(self, request, pk=None):
         """Mark a notification as read"""
@@ -119,9 +121,11 @@ class NotificationPreferenceViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'put', 'patch']
     
     def get_queryset(self):
-        """Return only preferences for current user"""
+        if getattr(self, "swagger_fake_view", False):
+            return NotificationPreference.objects.none()
+
         return NotificationPreference.objects.filter(user=self.request.user)
-    
+        
     @action(detail=False, methods=['get', 'put', 'patch'])
     def my_preferences(self, request):
         """Get or update current user's notification preferences"""
