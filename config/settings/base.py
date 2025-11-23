@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'apps.invoices',
     'apps.dashboard',
     'apps.notifications', 
+    'apps.supplier',
 ]
 
 CRONJOBS = [
