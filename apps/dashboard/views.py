@@ -8,7 +8,9 @@ Optimized Dashboard Views with Aggregation Queries
 """
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
 from django.db.models import (
     Count, Sum, Avg, Q, F, DecimalField, 
     Case, When, IntegerField, ExpressionWrapper
@@ -24,6 +26,71 @@ from apps.stock.models import Product
 from apps.clients.models import Client
 from apps.users.models import CustomUser
 from config import settings
+
+
+
+
+class InvoiceNetRevenueView(APIView):
+    """
+    Calculate net revenue for a specific invoice
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, invoice_id):
+        """
+        Calculate net revenue for a specific invoice
+        """
+        try:
+            invoice = Invoice.objects.get(id=invoice_id)
+            
+            if invoice.status != Invoice.STATUS_PAID:
+                return Response({
+                    'error': 'Le revenu net ne peut être calculé que pour les factures payées'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            net_revenue = self.calculate_invoice_net_revenue(invoice_id)
+            
+            return Response({
+                'invoice_id': invoice_id,
+                'invoice_number': invoice.facture or invoice.bon_de_commande or f'INV-{invoice.id}',
+                'total_revenue': float(invoice.total),
+                'net_revenue': float(net_revenue),
+                'net_margin_percentage': round(
+                    (float(net_revenue) / float(invoice.total) * 100) 
+                    if invoice.total > 0 else 0, 
+                    1
+                )
+            })
+            
+        except Invoice.DoesNotExist:
+            return Response({
+                'error': 'Facture non trouvée'
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    def calculate_invoice_net_revenue(self, invoice_id):
+        """
+        Calculate net revenue for a specific invoice
+        """
+        from apps.invoices.models import InvoiceLine
+        
+        invoice_lines = InvoiceLine.objects.filter(
+            invoice_id=invoice_id
+        ).select_related('product')
+        
+        net_revenue = Decimal('0.00')
+        
+        for line in invoice_lines:
+            if line.product:
+                # For product lines: line_total - (quantity * buying_price)
+                cost = line.quantity * line.product.buying_price
+                line_net = line.line_total - cost
+            else:
+                # For description-only lines: use line_total as net revenue
+                line_net = line.line_total
+            
+            net_revenue += line_net
+        
+        return net_revenue.quantize(Decimal('0.01'))
 
 
 class DashboardSummaryView(APIView):
@@ -436,62 +503,110 @@ class ProjectAnalyticsView(APIView):
         
         cache.set(cache_key, response_data, 600)  # 10 minutes
         return Response(response_data)
-
-
 class FinancialAnalyticsView(APIView):
     """
-    Financial analytics with revenue tracking
+    Financial analytics with revenue tracking using paid_date
     """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         # Get date range from params
         start_date_param = request.GET.get('start_date')
+        end_date_param = request.GET.get('end_date')
         today = timezone.now().date()
         
-        if start_date_param:
-            try:
-                # Parse the provided start date
+        # Parse dates with validation
+        try:
+            if start_date_param:
                 start_date = datetime.strptime(start_date_param, '%Y-%m-%d').date()
-                # Generate cache key based on the specific start date
-                cache_key = f'financial_analytics_{start_date.isoformat()}'
-            except (ValueError, TypeError):
-                # Fallback to default if parsing fails
-                start_date = today - timedelta(days=30)
-                cache_key = 'financial_analytics_month'
-        else:
-            # Default to last month if no start_date provided
-            start_date = today - timedelta(days=30)
-            cache_key = 'financial_analytics_month'
+            else:
+                start_date = today - timedelta(days=30)  # Default to last 30 days
+                
+            if end_date_param:
+                end_date = datetime.strptime(end_date_param, '%Y-%m-%d').date()
+            else:
+                end_date = today
+                
+            # Validate date range
+            if start_date > end_date:
+                return Response(
+                    {"error": "La date de début ne peut pas être après la date de fin"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except (ValueError, TypeError) as e:
+            return Response(
+                {"error": "Format de date invalide. Utilisez YYYY-MM-DD"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Generate cache key based on date range
+        cache_key = f'financial_analytics_{start_date.isoformat()}_{end_date.isoformat()}'
         
         cached_data = cache.get(cache_key)
         if cached_data:
             return Response(cached_data)
         
-        # ===== REVENUE TREND =====
+        # ===== REVENUE TREND (using paid_date) =====
         revenue_trend = Invoice.objects.filter(
-            issued_date__gte=start_date,
-            status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID]
+            paid_date__gte=start_date,
+            paid_date__lte=end_date,
+            status=Invoice.STATUS_PAID
         ).extra({
-            'date': "DATE(issued_date)"
+            'date': "DATE(paid_date)"
         }).values('date').annotate(
             revenue=Sum('total'),
             invoice_count=Count('id'),
-            paid_count=Count('id', filter=Q(status=Invoice.STATUS_PAID))
         ).order_by('date')
         
-        # ===== TOP REVENUE CLIENTS =====
+        # ===== NET REVENUE CALCULATION =====
+        # Get all paid invoices in date range
+        paid_invoices = Invoice.objects.filter(
+            paid_date__gte=start_date,
+            paid_date__lte=end_date,
+            status=Invoice.STATUS_PAID
+        ).prefetch_related('lines__product')
+        
+        total_net_revenue = Decimal('0.00')
+        total_revenue = Decimal('0.00')
+        
+        for invoice in paid_invoices:
+            invoice_net_revenue = Decimal('0.00')
+            
+            for line in invoice.lines.all():
+                if line.product:
+                    # For product lines: line_total - (quantity * buying_price)
+                    cost = line.quantity * line.product.buying_price
+                    line_net = line.line_total - cost
+                else:
+                    # For description-only lines: use line_total as net revenue
+                    line_net = line.line_total
+                
+                invoice_net_revenue += line_net
+            
+            total_net_revenue += invoice_net_revenue
+            total_revenue += invoice.total
+        
+        # ===== TOP REVENUE CLIENTS (using paid_date) =====
         top_revenue_clients = Client.objects.annotate(
             total_revenue=Sum(
                 'projects__invoices__total',
-                filter=Q(projects__invoices__status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID])
+                filter=Q(
+                    projects__invoices__status=Invoice.STATUS_PAID,
+                    projects__invoices__paid_date__gte=start_date,
+                    projects__invoices__paid_date__lte=end_date
+                )
             ),
-            invoice_count=Count('projects__invoices', distinct=True),
+            invoice_count=Count(
+                'projects__invoices',
+                filter=Q(
+                    projects__invoices__status=Invoice.STATUS_PAID,
+                    projects__invoices__paid_date__gte=start_date,
+                    projects__invoices__paid_date__lte=end_date
+                ),
+                distinct=True
+            ),
             project_count=Count('projects', distinct=True),
-            projects_with_maintenance=Count('projects', filter=Q(
-                projects__duration_maintenance__isnull=False,
-                projects__interval_maintenance__isnull=False
-            ))
         ).filter(total_revenue__gt=0).order_by('-total_revenue')[:10]
         
         top_revenue_data = [
@@ -501,7 +616,6 @@ class FinancialAnalyticsView(APIView):
                 'total_revenue': float(client.total_revenue or 0),
                 'invoice_count': client.invoice_count,
                 'project_count': client.project_count,
-                'projects_with_maintenance': client.projects_with_maintenance,
                 'avg_revenue_per_project': round(
                     float(client.total_revenue or 0) / client.project_count
                     if client.project_count > 0 else 0,
@@ -511,73 +625,60 @@ class FinancialAnalyticsView(APIView):
             for client in top_revenue_clients
         ]
         
-        # ===== PAYMENT STATUS ANALYSIS =====
+        # ===== PAYMENT STATUS ANALYSIS (using paid_date) =====
         payment_stats = Invoice.objects.filter(
-            issued_date__gte=start_date
+            paid_date__gte=start_date,
+            paid_date__lte=end_date
         ).aggregate(
-            total_issued=Sum('total', filter=Q(status=Invoice.STATUS_ISSUED)),
             total_paid=Sum('total', filter=Q(status=Invoice.STATUS_PAID)),
+            total_invoices_paid=Count('id', filter=Q(status=Invoice.STATUS_PAID)),
             avg_days_to_payment=Avg(
                 ExpressionWrapper(
-                    F('updated_at') - F('created_at'),
+                    F('paid_date') - F('issued_date'),
                     output_field=IntegerField()
                 ),
                 filter=Q(status=Invoice.STATUS_PAID)
             )
         )
         
-        # ===== INVOICE AGING ANALYSIS =====
-        aging_analysis = Invoice.objects.filter(
-            status=Invoice.STATUS_ISSUED
-        ).aggregate(
-            current=Count('id', filter=Q(due_date__gte=today)),
-            overdue_1_30=Count('id', filter=Q(
-                due_date__lt=today,
-                due_date__gte=today - timedelta(days=30)
-            )),
-            overdue_31_60=Count('id', filter=Q(
-                due_date__lt=today - timedelta(days=30),
-                due_date__gte=today - timedelta(days=60)
-            )),
-            overdue_60_plus=Count('id', filter=Q(
-                due_date__lt=today - timedelta(days=60)
-            )),
-            current_amount=Sum('total', filter=Q(due_date__gte=today)),
-            overdue_amount=Sum('total', filter=Q(due_date__lt=today))
+        # ===== CURRENT INVOICE STATS (not dependent on date range) =====
+        current_invoice_stats = Invoice.objects.aggregate(
+            total_issued=Count('id', filter=Q(status=Invoice.STATUS_ISSUED)),
+            total_draft=Count('id', filter=Q(status=Invoice.STATUS_DRAFT)),
+            total_paid_all_time=Count('id', filter=Q(status=Invoice.STATUS_PAID)),
+            total_revenue_issued=Sum('total', filter=Q(status=Invoice.STATUS_ISSUED)),
+            total_revenue_paid_all_time=Sum('total', filter=Q(status=Invoice.STATUS_PAID)),
         )
         
         response_data = {
             'generated_at': timezone.now().isoformat(),
             'date_range': {
                 'start': start_date.isoformat(),
-                'end': today.isoformat(),
-                'range': 'custom' if start_date_param else 'month'
+                'end': end_date.isoformat(),
+                'days': (end_date - start_date).days
             },
             'revenue_trend': list(revenue_trend),
-            'top_revenue_clients': top_revenue_data,
-            'payment_metrics': {
-                'total_issued': float(payment_stats['total_issued'] or 0),
-                'total_paid': float(payment_stats['total_paid'] or 0),
-                'payment_rate': round(
-                    (payment_stats['total_paid'] / payment_stats['total_issued'] * 100)
-                    if payment_stats['total_issued'] else 0,
+            'revenue_metrics': {
+                'total_revenue': float(total_revenue),
+                'total_net_revenue': float(total_net_revenue),
+                'net_profit_margin': round(
+                    (float(total_net_revenue) / float(total_revenue) * 100) 
+                    if total_revenue > 0 else 0, 
                     1
                 ),
-                'avg_days_to_payment': round(payment_stats['avg_days_to_payment'] or 0, 1)
+                'total_invoices_paid': payment_stats['total_invoices_paid'] or 0,
+                'avg_payment_amount': float(total_revenue / payment_stats['total_invoices_paid']) 
+                    if payment_stats['total_invoices_paid'] else 0,
+                'avg_days_to_payment': round(payment_stats['avg_days_to_payment'] or 0, 1),
             },
-            'aging_analysis': {
-                'current': {
-                    'count': aging_analysis['current'],
-                    'amount': float(aging_analysis['current_amount'] or 0)
-                },
-                'overdue_1_30_days': {
-                    'count': aging_analysis['overdue_1_30'],
-                    'amount': float(aging_analysis['overdue_amount'] or 0)  # Note: This is total overdue amount
-                },
-                'overdue_31_60_days': aging_analysis['overdue_31_60'],
-                'overdue_60_plus_days': aging_analysis['overdue_60_plus'],
-                'total_overdue_amount': float(aging_analysis['overdue_amount'] or 0)
-            }
+            'current_invoice_status': {
+                'issued_invoices': current_invoice_stats['total_issued'] or 0,
+                'draft_invoices': current_invoice_stats['total_draft'] or 0,
+                'paid_invoices_all_time': current_invoice_stats['total_paid_all_time'] or 0,
+                'revenue_issued': float(current_invoice_stats['total_revenue_issued'] or 0),
+                'revenue_paid_all_time': float(current_invoice_stats['total_revenue_paid_all_time'] or 0),
+            },
+            'top_revenue_clients': top_revenue_data,
         }
         
         cache.set(cache_key, response_data, 300)  # 5 minutes

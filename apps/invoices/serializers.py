@@ -65,14 +65,14 @@ class InvoiceSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'project', 'project_name', 'client_name','client',
             'bon_de_commande', 'bon_de_versement', 'bon_de_reception', 'facture',
-            'issued_date', 'due_date', 
+            'issued_date', 'due_date', 'paid_date',
             'subtotal', 'tva', 'tax_amount', 'total', 'deposit_price', 
             'status', 'created_by', 'created_by_name', 'created_at',
             'is_draft', 'is_issued', 'is_paid', 'is_editable', 'stock_is_affected',
             'lines'
         ]
         read_only_fields = ['subtotal', 'tax_amount', 'total', 'created_at', 
-                           'is_draft', 'is_issued', 'is_paid', 'is_editable', 'stock_is_affected']
+                           'is_draft', 'is_issued', 'is_paid', 'is_editable', 'stock_is_affected','paid_date','issued_date']
 
 
 class InvoiceCreateSerializer(serializers.ModelSerializer):

@@ -50,6 +50,7 @@ class Invoice(TimeStampedModel):
     # Financial fields
     issued_date = models.DateField(auto_now_add=True, db_index=True)
     due_date = models.DateField(null=True, blank=True, db_index=True)
+    paid_date = models.DateField(null=True, blank=True, db_index=True)
     
     # Subtotal before tax
     subtotal = models.DecimalField(
@@ -294,7 +295,8 @@ class Invoice(TimeStampedModel):
             raise ValidationError("Seules les factures émises peuvent être marquées comme payées")
         
         self.status = self.STATUS_PAID
-        self.save(update_fields=['status', 'updated_at'])
+        self.paid_date = timezone.now().date() 
+        self.save(update_fields=['status', 'paid_date','updated_at'])
 
     @transaction.atomic
     def revert_to_draft(self):
@@ -315,7 +317,9 @@ class Invoice(TimeStampedModel):
                 )
         
         self.status = self.STATUS_DRAFT
-        self.save(update_fields=['status', 'updated_at'])
+        self.issued_date = None
+        self.paid_date = None 
+        self.save(update_fields=['status','paid_date' , 'issued_date' 'updated_at'])
 
     def delete(self, *args, **kwargs):
         """
