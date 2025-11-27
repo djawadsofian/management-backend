@@ -22,6 +22,9 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
 
 # Application definition
 INSTALLED_APPS = [
+    'daphne',
+    'channels',
+ 
     'django_crontab',
     # Django apps
     'django.contrib.admin',
@@ -49,8 +52,11 @@ INSTALLED_APPS = [
     'apps.supplier',
 ]
 
+ASGI_APPLICATION = 'config.asgi.application'
+
 CRONJOBS = [
     ('0 * * * *', 'apps.notifications.management.commands.check_upcoming_events.Command.handle'),
+    ('0 8,14,20 * * *', 'apps.notifications.management.commands.check_and_send_notifications.Command.handle'),
 ]
 
 MIDDLEWARE = [

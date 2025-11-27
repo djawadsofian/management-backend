@@ -16,6 +16,8 @@ class Notification(models.Model):
     TYPE_MAINTENANCE_ADDED = 'MAINTENANCE_ADDED'
     TYPE_MAINTENANCE_MODIFIED = 'MAINTENANCE_MODIFIED'
     TYPE_MAINTENANCE_DELETED = 'MAINTENANCE_DELETED'
+    TYPE_LOW_STOCK_ALERT = 'LOW_STOCK_ALERT'  # NEW
+    TYPE_OUT_OF_STOCK_ALERT = 'OUT_OF_STOCK_ALERT'  # NEW
     
     TYPE_CHOICES = [
         (TYPE_PROJECT_ASSIGNED, 'Assigned to Project'),
@@ -26,6 +28,8 @@ class Notification(models.Model):
         (TYPE_MAINTENANCE_ADDED, 'Maintenance Added'),
         (TYPE_MAINTENANCE_MODIFIED, 'Maintenance Modified'),
         (TYPE_MAINTENANCE_DELETED, 'Maintenance Deleted'),
+        (TYPE_LOW_STOCK_ALERT, 'Low Stock Alert'),
+        (TYPE_OUT_OF_STOCK_ALERT, 'Out of Stock Alert'),
     ]
     
     # Priority levels
@@ -75,6 +79,13 @@ class Notification(models.Model):
         blank=True,
         related_name='notifications'
     )
+    related_product = models.ForeignKey(  # NEW
+        'stock.Product',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='notifications'
+    )
     
     # Metadata
     data = models.JSONField(
@@ -86,10 +97,14 @@ class Notification(models.Model):
     # Status
     is_read = models.BooleanField(default=False, db_index=True)
     read_at = models.DateTimeField(null=True, blank=True)
+    is_confirmed = models.BooleanField(default=False, db_index=True)  # NEW
+    confirmed_at = models.DateTimeField(null=True, blank=True)  # NEW
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     sent_at = models.DateTimeField(null=True, blank=True)
+    last_sent_at = models.DateTimeField(null=True, blank=True)  # NEW - for repeat sending
+    send_count = models.IntegerField(default=0)  # NEW - track how many times sent
     
     class Meta:
         ordering = ['-created_at']
@@ -97,6 +112,7 @@ class Notification(models.Model):
             models.Index(fields=['recipient', 'is_read']),
             models.Index(fields=['recipient', 'created_at']),
             models.Index(fields=['notification_type', 'created_at']),
+            models.Index(fields=['is_confirmed', 'notification_type']),  # NEW
         ]
     
     def __str__(self):
@@ -109,11 +125,21 @@ class Notification(models.Model):
             self.read_at = timezone.now()
             self.save(update_fields=['is_read', 'read_at'])
     
+    def mark_as_confirmed(self):  # NEW
+        """Mark notification as confirmed (won't be sent again)"""
+        if not self.is_confirmed:
+            self.is_confirmed = True
+            self.confirmed_at = timezone.now()
+            self.save(update_fields=['is_confirmed', 'confirmed_at'])
+    
     def mark_as_sent(self):
-        """Mark notification as sent"""
+        """Mark notification as sent and update counters"""
+        now = timezone.now()
         if not self.sent_at:
-            self.sent_at = timezone.now()
-            self.save(update_fields=['sent_at'])
+            self.sent_at = now
+        self.last_sent_at = now
+        self.send_count += 1
+        self.save(update_fields=['sent_at', 'last_sent_at', 'send_count'])
     
     @property
     def age_in_seconds(self):
@@ -124,6 +150,17 @@ class Notification(models.Model):
     def is_urgent(self):
         """Check if notification is urgent"""
         return self.priority == self.PRIORITY_URGENT
+    
+    @property
+    def requires_confirmation(self):  # NEW
+        """Check if this notification type requires confirmation"""
+        return self.notification_type in [
+            self.TYPE_PROJECT_STARTING_SOON,
+            self.TYPE_MAINTENANCE_STARTING_SOON,
+            self.TYPE_LOW_STOCK_ALERT,
+            self.TYPE_OUT_OF_STOCK_ALERT,
+            self.TYPE_PROJECT_ASSIGNED,
+        ]
 
 
 class NotificationPreference(models.Model):
@@ -145,6 +182,8 @@ class NotificationPreference(models.Model):
     enable_maintenance_added = models.BooleanField(default=True)
     enable_maintenance_modified = models.BooleanField(default=True)
     enable_maintenance_deleted = models.BooleanField(default=True)
+    enable_low_stock_alert = models.BooleanField(default=True)  # NEW
+    enable_out_of_stock_alert = models.BooleanField(default=True)  # NEW
     
     # Sound preferences
     enable_sound = models.BooleanField(default=True)
@@ -174,6 +213,8 @@ class NotificationPreference(models.Model):
             Notification.TYPE_MAINTENANCE_ADDED: self.enable_maintenance_added,
             Notification.TYPE_MAINTENANCE_MODIFIED: self.enable_maintenance_modified,
             Notification.TYPE_MAINTENANCE_DELETED: self.enable_maintenance_deleted,
+            Notification.TYPE_LOW_STOCK_ALERT: self.enable_low_stock_alert,
+            Notification.TYPE_OUT_OF_STOCK_ALERT: self.enable_out_of_stock_alert,
         }
         return type_map.get(notification_type, True)
     

@@ -29,15 +29,18 @@ class NotificationViewSet(StandardFilterMixin, viewsets.ReadOnlyModelViewSet):
         - GET /api/notifications/ - List notifications
         - GET /api/notifications/{id}/ - Retrieve notification
         - POST /api/notifications/{id}/mark-read/ - Mark as read
+        - POST /api/notifications/{id}/confirm/ - Confirm notification (NEW)
         - POST /api/notifications/mark-all-read/ - Mark all as read
+        - POST /api/notifications/confirm-all/ - Confirm all (NEW)
         - GET /api/notifications/unread-count/ - Get unread count
+        - GET /api/notifications/unconfirmed-count/ - Get unconfirmed count (NEW)
         - DELETE /api/notifications/{id}/ - Delete notification
     """
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StaticPagination
     
-    filterset_fields = ['notification_type', 'priority', 'is_read']
+    filterset_fields = ['notification_type', 'priority', 'is_read', 'is_confirmed']
     search_fields = ['title', 'message']
     ordering_fields = ['created_at', 'priority']
     ordering = ['-created_at']
@@ -51,7 +54,8 @@ class NotificationViewSet(StandardFilterMixin, viewsets.ReadOnlyModelViewSet):
         ).select_related(
             'related_project',
             'related_project__client',
-            'related_maintenance'
+            'related_maintenance',
+            'related_product'
         ).order_by('-created_at')
         
     @action(detail=True, methods=['post'])
@@ -63,6 +67,29 @@ class NotificationViewSet(StandardFilterMixin, viewsets.ReadOnlyModelViewSet):
         serializer = self.get_serializer(notification)
         return Response(serializer.data)
     
+    @action(detail=True, methods=['post'])
+    def confirm(self, request, pk=None):
+        """Confirm a notification (won't be sent again)"""
+        notification = self.get_object()
+        
+        if not notification.requires_confirmation:
+            return Response(
+                {'message': 'Ce type de notification ne nécessite pas de confirmation'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        notification.mark_as_confirmed()
+        
+        # Also mark as read
+        if not notification.is_read:
+            notification.mark_as_read()
+        
+        serializer = self.get_serializer(notification)
+        return Response({
+            'message': 'Notification confirmée',
+            'notification': serializer.data
+        })
+    
     @action(detail=False, methods=['post'])
     def mark_all_read(self, request):
         """Mark all notifications as read"""
@@ -73,10 +100,61 @@ class NotificationViewSet(StandardFilterMixin, viewsets.ReadOnlyModelViewSet):
             'count': count
         })
     
+    @action(detail=False, methods=['post'], url_path='confirm-all')
+    def confirm_all(self, request):
+        """Confirm all unconfirmed notifications"""
+        from django.utils import timezone
+
+        unconfirmed = Notification.objects.filter(
+            recipient=request.user,
+            is_confirmed=False
+        )
+        
+        # Filter only notifications that require confirmation
+        unconfirmed = unconfirmed.filter(
+            notification_type__in=[
+                Notification.TYPE_PROJECT_STARTING_SOON,
+                Notification.TYPE_MAINTENANCE_STARTING_SOON,
+                Notification.TYPE_LOW_STOCK_ALERT,
+                Notification.TYPE_OUT_OF_STOCK_ALERT,
+                Notification.TYPE_PROJECT_ASSIGNED,
+            ]
+        )
+        
+        count = unconfirmed.count()
+        unconfirmed.update(
+            is_confirmed=True,
+            confirmed_at=timezone.now()
+        )
+        
+        return Response({
+            'message': f'{count} notifications confirmées',
+            'count': count
+        })
+    
     @action(detail=False, methods=['get'])
     def unread_count(self, request):
         """Get unread notification count"""
         count = NotificationService.get_unread_count(request.user)
+        
+        return Response({
+            'count': count
+        })
+    
+    @action(detail=False, methods=['get'], url_path='unconfirmed-count')
+    def unconfirmed_count(self, request):
+        """Get unconfirmed notification count"""
+        count = Notification.objects.filter(
+            recipient=request.user,
+            is_confirmed=False,
+            notification_type__in=[
+                Notification.TYPE_PROJECT_STARTING_SOON,
+                Notification.TYPE_MAINTENANCE_STARTING_SOON,
+                Notification.TYPE_LOW_STOCK_ALERT,
+                Notification.TYPE_OUT_OF_STOCK_ALERT,
+                Notification.TYPE_PROJECT_ASSIGNED,
+            ]
+        ).count()
         
         return Response({
             'count': count
@@ -93,6 +171,28 @@ class NotificationViewSet(StandardFilterMixin, viewsets.ReadOnlyModelViewSet):
         notifications = self.get_queryset().filter(
             created_at__gte=yesterday
         )[:20]
+        
+        serializer = self.get_serializer(notifications, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='unconfirmed')
+    def unconfirmed(self, request):
+        """Get all unconfirmed notifications"""
+        notifications = self.get_queryset().filter(
+            is_confirmed=False,
+            notification_type__in=[
+                Notification.TYPE_PROJECT_STARTING_SOON,
+                Notification.TYPE_MAINTENANCE_STARTING_SOON,
+                Notification.TYPE_LOW_STOCK_ALERT,
+                Notification.TYPE_OUT_OF_STOCK_ALERT,
+                Notification.TYPE_PROJECT_ASSIGNED,
+            ]
+        )
+        
+        page = self.paginate_queryset(notifications)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         
         serializer = self.get_serializer(notifications, many=True)
         return Response(serializer.data)
