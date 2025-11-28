@@ -48,7 +48,7 @@ class Invoice(TimeStampedModel):
     facture = models.CharField(max_length=100, blank=True, null=True)
     
     # Financial fields
-    issued_date = models.DateField(auto_now_add=True, db_index=True)
+    issued_date = models.DateField(null=True, blank=True, db_index=True) 
     due_date = models.DateField(null=True, blank=True, db_index=True)
     paid_date = models.DateField(null=True, blank=True, db_index=True)
     
@@ -304,6 +304,7 @@ class Invoice(TimeStampedModel):
         Revert invoice from ISSUED to DRAFT.
         Restores all stock that was deducted.
         """
+        print(self.status == self.STATUS_ISSUED)
         if self.status != self.STATUS_ISSUED:
             raise ValidationError("Seules les factures émises peuvent revenir au brouillon")
         
@@ -319,7 +320,7 @@ class Invoice(TimeStampedModel):
         self.status = self.STATUS_DRAFT
         self.issued_date = None
         self.paid_date = None 
-        self.save(update_fields=['status','paid_date' , 'issued_date' 'updated_at'])
+        self.save(update_fields=['status','paid_date' , 'issued_date', 'updated_at'])
 
     def delete(self, *args, **kwargs):
         """

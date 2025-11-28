@@ -47,6 +47,7 @@ class NotificationService:
         priority=Notification.PRIORITY_MEDIUM,
         related_project=None,
         related_maintenance=None,
+        related_product=None,
         data=None
     ):
         """
@@ -79,6 +80,7 @@ class NotificationService:
                 priority=priority,
                 related_project=related_project,
                 related_maintenance=related_maintenance,
+                related_product=related_product,
                 data=data or {}
             )
             
