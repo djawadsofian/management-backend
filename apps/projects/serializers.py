@@ -42,6 +42,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
     warranty_end_date = serializers.ReadOnlyField()
     progress_percentage = serializers.ReadOnlyField()
     maintenances = MaintenanceSerializer(many=True, read_only=True)
+    invoice_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -49,8 +50,12 @@ class ProjectListSerializer(serializers.ModelSerializer):
             "id", "name", "client", "start_date", "end_date", 
             "is_verified", "status", "assigned_employers", 
             "warranty_display", "warranty_end_date", "progress_percentage",
-            "duration_maintenance", "interval_maintenance", "maintenances","invoices"
+            "duration_maintenance", "interval_maintenance", "maintenances","invoices", "invoice_status"
         )
+    def get_invoice_status(self, obj):
+        # Get the latest invoice status or return None
+        latest_invoice = obj.invoices.order_by('-created_at').first()
+        return latest_invoice.status if latest_invoice else None
 
 # apps/projects/serializers.py
 
@@ -65,6 +70,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         allow_empty=True  # Add this to allow empty lists
     )
     invoices = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+
 
     status = serializers.ReadOnlyField()
     maintenances = MaintenanceSerializer(many=True, read_only=True)
@@ -84,6 +90,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             "is_completed"
         )
 
+ 
     def validate(self, data):
         """
         Validate project data
