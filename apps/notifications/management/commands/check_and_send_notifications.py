@@ -1,8 +1,9 @@
 # apps/notifications/management/commands/check_and_send_notifications.py
 """
 Django management command to check and send recurring notifications
-Run this command via cron job 3 times a day (8 AM, 2 PM, 8 PM):
-0 8,14,20 * * * cd /path/to/project && python manage.py check_and_send_notifications
+Run this command via cron job every 30 seconds for immediate notifications:
+* * * * * cd /path/to/project && python manage.py check_and_send_notifications
+* * * * * sleep 30; cd /path/to/project && python manage.py check_and_send_notifications
 """
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -19,13 +20,22 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = 'Check and send recurring notifications for low stock, upcoming projects, and maintenances'
+    help = 'Check and send recurring notifications every 30 seconds for immediate delivery'
+    
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--check-interval',
+            type=int,
+            default=30,
+            help='Check interval in seconds (default: 30)'
+        )
     
     def handle(self, *args, **options):
         now = timezone.now()
+        check_interval = options['check_interval']
         
         self.stdout.write(self.style.HTTP_INFO(
-            f"🔔 Checking notifications at {now.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"🔔 Checking notifications at {now.strftime('%Y-%m-%d %H:%M:%S')} (interval: {check_interval}s)"
         ))
         
         # Get all admins and assistants
@@ -38,65 +48,66 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("⚠️  No active admins or assistants found"))
             return
         
-        # ========== 1. CHECK LOW STOCK PRODUCTS ==========
-        self.stdout.write(self.style.HTTP_INFO("\n📦 Checking low stock products..."))
-        low_stock_count = self._check_low_stock_products(admins_and_assistants)
+        total_count = 0
         
-        # ========== 2. CHECK OUT OF STOCK PRODUCTS ==========
-        self.stdout.write(self.style.HTTP_INFO("\n❌ Checking out of stock products..."))
-        out_of_stock_count = self._check_out_of_stock_products(admins_and_assistants)
+        # ========== 1. CHECK LOW STOCK PRODUCTS (IMMEDIATE) ==========
+        low_stock_count = self._check_low_stock_products(admins_and_assistants, check_interval)
+        total_count += low_stock_count
         
-        # ========== 3. CHECK PROJECTS STARTING IN 24H ==========
-        self.stdout.write(self.style.HTTP_INFO("\n🏗️  Checking projects starting in 24 hours..."))
-        projects_count = self._check_upcoming_projects(admins_and_assistants)
+        # ========== 2. CHECK OUT OF STOCK PRODUCTS (IMMEDIATE) ==========
+        out_of_stock_count = self._check_out_of_stock_products(admins_and_assistants, check_interval)
+        total_count += out_of_stock_count
         
-        # ========== 4. CHECK MAINTENANCES STARTING IN 24H ==========
-        self.stdout.write(self.style.HTTP_INFO("\n🔧 Checking maintenances starting in 24 hours..."))
-        maintenances_count = self._check_upcoming_maintenances(admins_and_assistants)
+        # ========== 3. CHECK PROJECTS STARTING SOON ==========
+        projects_count = self._check_upcoming_projects(admins_and_assistants, check_interval)
+        total_count += projects_count
         
-        # ========== 5. RESEND UNCONFIRMED NOTIFICATIONS TO EMPLOYERS ==========
-        self.stdout.write(self.style.HTTP_INFO("\n🔄 Resending unconfirmed notifications to employers..."))
-        resent_count = self._resend_unconfirmed_to_employers()
+        # ========== 4. CHECK MAINTENANCES STARTING SOON ==========
+        maintenances_count = self._check_upcoming_maintenances(admins_and_assistants, check_interval)
+        total_count += maintenances_count
         
-        # ========== SUMMARY ==========
-        self.stdout.write(self.style.SUCCESS(
-            f"\n📊 Summary:\n"
-            f"   • Low stock alerts: {low_stock_count}\n"
-            f"   • Out of stock alerts: {out_of_stock_count}\n"
-            f"   • Projects starting soon: {projects_count}\n"
-            f"   • Maintenances starting soon: {maintenances_count}\n"
-            f"   • Resent unconfirmed (employers): {resent_count}\n"
-        ))
+        # ========== 5. CHECK RECENT PROJECT ASSIGNMENTS ==========
+        assignments_count = self._check_recent_assignments(check_interval)
+        total_count += assignments_count
+        
+        # ========== 6. RESEND UNSENT NOTIFICATIONS ==========
+        unsent_count = self._resend_unsent_notifications(check_interval)
+        total_count += unsent_count
+        
+        if total_count > 0:
+            self.stdout.write(self.style.SUCCESS(
+                f"✅ Sent {total_count} notifications immediately!"
+            ))
+        else:
+            self.stdout.write("⏭️  No new notifications to send")
     
-    def _check_low_stock_products(self, recipients):
-        """Check and notify about low stock products"""
+    def _check_low_stock_products(self, recipients, check_interval):
+        """Check for low stock products that changed recently"""
+        recent_threshold = timezone.now() - timedelta(seconds=check_interval * 2)
+        
         low_stock_products = Product.objects.filter(
             quantity__gt=0,
-            quantity__lte=models.F('reorder_threshold')
+            quantity__lte=models.F('reorder_threshold'),
+            updated_at__gte=recent_threshold  # Only recently updated products
         )
         
         count = 0
         for product in low_stock_products:
             for user in recipients:
-                # Check if unconfirmed notification already exists
-                existing = Notification.objects.filter(
+                # Check if notification was already sent recently
+                recent_notification = Notification.objects.filter(
                     recipient=user,
                     notification_type=Notification.TYPE_LOW_STOCK_ALERT,
                     related_product=product,
-                    is_confirmed=False
-                ).first()
+                    created_at__gte=recent_threshold
+                ).exists()
                 
-                if existing:
-                    # Update last sent time
-                    existing.mark_as_sent()
-                    self.stdout.write(f"   🔄 Resent low stock alert for {product.name} to {user.username}")
-                else:
-                    # Create new notification
+                if not recent_notification:
                     notification = NotificationService.create_notification(
                         recipient=user,
                         notification_type=Notification.TYPE_LOW_STOCK_ALERT,
                         title=f"Stock Faible: {product.name}",
-                        message=f"Le produit '{product.name}' est en stock faible. Quantité actuelle: {product.quantity}, Seuil: {product.reorder_threshold}",
+                        message=f"Le produit '{product.name}' est en stock faible. Quantité: {product.quantity}",
                         priority=Notification.PRIORITY_HIGH,
                         related_product=product,
                         data={
@@ -108,31 +119,31 @@ class Command(BaseCommand):
                     )
                     if notification:
                         count += 1
-                        self.stdout.write(f"   ✅ Created low stock alert for {product.name} to {user.username}")
+                        self.stdout.write(f"   📦 Low stock: {product.name} → {user.username}")
         
         return count
     
-    def _check_out_of_stock_products(self, recipients):
-        """Check and notify about out of stock products"""
-        out_of_stock_products = Product.objects.filter(quantity=0)
+    def _check_out_of_stock_products(self, recipients, check_interval):
+        """Check for out of stock products that changed recently"""
+        recent_threshold = timezone.now() - timedelta(seconds=check_interval * 2)
+        
+        out_of_stock_products = Product.objects.filter(
+            quantity=0,
+            updated_at__gte=recent_threshold  # Only recently went out of stock
+        )
         
         count = 0
         for product in out_of_stock_products:
             for user in recipients:
-                # Check if unconfirmed notification already exists
-                existing = Notification.objects.filter(
+                # Check if notification was already sent recently
+                recent_notification = Notification.objects.filter(
                     recipient=user,
                     notification_type=Notification.TYPE_OUT_OF_STOCK_ALERT,
                     related_product=product,
-                    is_confirmed=False
-                ).first()
+                    created_at__gte=recent_threshold
+                ).exists()
                 
-                if existing:
-                    # Update last sent time
-                    existing.mark_as_sent()
-                    self.stdout.write(f"   🔄 Resent out of stock alert for {product.name} to {user.username}")
-                else:
-                    # Create new notification
+                if not recent_notification:
                     notification = NotificationService.create_notification(
                         recipient=user,
                         notification_type=Notification.TYPE_OUT_OF_STOCK_ALERT,
@@ -144,130 +155,156 @@ class Command(BaseCommand):
                             'product_id': product.id,
                             'product_name': product.name,
                             'current_quantity': 0,
-                            'reorder_threshold': product.reorder_threshold,
                         }
                     )
                     if notification:
                         count += 1
-                        self.stdout.write(f"   ✅ Created out of stock alert for {product.name} to {user.username}")
+                        self.stdout.write(f"   ❌ Out of stock: {product.name} → {user.username}")
         
         return count
     
-    def _check_upcoming_projects(self, recipients):
-        """Check and notify about projects starting in 24 hours"""
+    def _check_upcoming_projects(self, recipients, check_interval):
+        """Check for projects starting very soon (within next 2 hours)"""
         now = timezone.now()
-        tomorrow = now + timedelta(hours=24)
+        soon_threshold = now + timedelta(hours=2)
         
-        # Find projects starting between now and 24 hours from now
         upcoming_projects = Project.objects.filter(
             start_date__gte=now.date(),
-            start_date__lte=tomorrow.date(),
+            start_date__lte=soon_threshold.date(),
             is_verified=True
         ).select_related('client')
         
         count = 0
         for project in upcoming_projects:
             for user in recipients:
-                # Check if unconfirmed notification already exists
-                existing = Notification.objects.filter(
+                # Check if notification was sent in last check interval
+                recent_threshold = timezone.now() - timedelta(seconds=check_interval)
+                recent_notification = Notification.objects.filter(
                     recipient=user,
                     notification_type=Notification.TYPE_PROJECT_STARTING_SOON,
                     related_project=project,
-                    is_confirmed=False
-                ).first()
+                    created_at__gte=recent_threshold
+                ).exists()
                 
-                if existing:
-                    # Update last sent time
-                    existing.mark_as_sent()
-                    self.stdout.write(f"   🔄 Resent project alert for {project.name} to {user.username}")
-                else:
-                    # Create new notification
+                if not recent_notification:
+                    hours_until = int((project.start_date - now.date()).days * 24)
                     notification = NotificationService.create_notification(
                         recipient=user,
                         notification_type=Notification.TYPE_PROJECT_STARTING_SOON,
-                        title=f"Projet Démarre Demain: {project.name}",
-                        message=f"Le projet '{project.name}' pour le client {project.client.name} commence demain ({project.start_date.strftime('%d/%m/%Y')}).",
-                        priority=Notification.PRIORITY_URGENT,
+                        title=f"Projet Bientôt: {project.name}",
+                        message=f"Le projet '{project.name}' commence dans {hours_until}h",
+                        priority=Notification.PRIORITY_HIGH,
                         related_project=project,
                         data={
                             'project_id': project.id,
                             'project_name': project.name,
-                            'client_name': project.client.name,
-                            'start_date': project.start_date.isoformat(),
-                            'hours_until_start': 24,
+                            'hours_until_start': hours_until,
                         }
                     )
                     if notification:
                         count += 1
-                        self.stdout.write(f"   ✅ Created project alert for {project.name} to {user.username}")
+                        self.stdout.write(f"   🏗️  Project soon: {project.name} → {user.username}")
         
         return count
     
-    def _check_upcoming_maintenances(self, recipients):
-        """Check and notify about maintenances starting in 24 hours"""
+    def _check_upcoming_maintenances(self, recipients, check_interval):
+        """Check for maintenances starting very soon (within next 2 hours)"""
         now = timezone.now()
-        tomorrow = now + timedelta(hours=24)
+        soon_threshold = now + timedelta(hours=2)
         
-        # Find maintenances starting between now and 24 hours from now
         upcoming_maintenances = Maintenance.objects.filter(
             start_date__gte=now.date(),
-            start_date__lte=tomorrow.date()
+            start_date__lte=soon_threshold.date()
         ).select_related('project', 'project__client')
         
         count = 0
         for maintenance in upcoming_maintenances:
             for user in recipients:
-                # Check if unconfirmed notification already exists
-                existing = Notification.objects.filter(
+                recent_threshold = timezone.now() - timedelta(seconds=check_interval)
+                recent_notification = Notification.objects.filter(
                     recipient=user,
                     notification_type=Notification.TYPE_MAINTENANCE_STARTING_SOON,
                     related_maintenance=maintenance,
-                    is_confirmed=False
-                ).first()
+                    created_at__gte=recent_threshold
+                ).exists()
                 
-                if existing:
-                    # Update last sent time
-                    existing.mark_as_sent()
-                    self.stdout.write(f"   🔄 Resent maintenance alert for {maintenance.project.name} to {user.username}")
-                else:
-                    # Create new notification
+                if not recent_notification:
+                    hours_until = int((maintenance.start_date - now.date()).days * 24)
                     notification = NotificationService.create_notification(
                         recipient=user,
                         notification_type=Notification.TYPE_MAINTENANCE_STARTING_SOON,
-                        title=f"Maintenance Demain: {maintenance.project.name}",
-                        message=f"La maintenance du projet '{maintenance.project.name}' est prévue demain ({maintenance.start_date.strftime('%d/%m/%Y')}).",
-                        priority=Notification.PRIORITY_URGENT,
+                        title=f"Maintenance Bientôt: {maintenance.project.name}",
+                        message=f"Maintenance prévue dans {hours_until}h",
+                        priority=Notification.PRIORITY_HIGH,
                         related_project=maintenance.project,
                         related_maintenance=maintenance,
                         data={
                             'maintenance_id': maintenance.id,
-                            'project_id': maintenance.project.id,
                             'project_name': maintenance.project.name,
-                            'start_date': maintenance.start_date.isoformat(),
-                            'end_date': maintenance.end_date.isoformat(),
-                            'maintenance_type': maintenance.maintenance_type,
-                            'hours_until_start': 24,
+                            'hours_until_start': hours_until,
                         }
                     )
                     if notification:
                         count += 1
-                        self.stdout.write(f"   ✅ Created maintenance alert for {maintenance.project.name} to {user.username}")
+                        self.stdout.write(f"   🔧 Maintenance soon: {maintenance.project.name} → {user.username}")
         
         return count
     
-    def _resend_unconfirmed_to_employers(self):
-        """Resend unconfirmed notifications to employers"""
-        # Get all unconfirmed notifications for employers (PROJECT_ASSIGNED)
-        unconfirmed = Notification.objects.filter(
-            is_confirmed=False,
-            notification_type=Notification.TYPE_PROJECT_ASSIGNED,
-            recipient__role=CustomUser.ROLE_EMPLOYER
+    def _check_recent_assignments(self, check_interval):
+        """Check for recently assigned projects"""
+        recent_threshold = timezone.now() - timedelta(seconds=check_interval * 2)
+        
+        # Get projects with recent assignments
+        recent_projects = Project.objects.filter(
+            assigned_employers__isnull=False,
+            updated_at__gte=recent_threshold
+        ).distinct()
+        
+        count = 0
+        for project in recent_projects:
+            for employer in project.assigned_employers.all():
+                # Check if assignment notification was sent recently
+                recent_notification = Notification.objects.filter(
+                    recipient=employer,
+                    notification_type=Notification.TYPE_PROJECT_ASSIGNED,
+                    related_project=project,
+                    created_at__gte=recent_threshold
+                ).exists()
+                
+                if not recent_notification:
+                    notification = NotificationService.create_notification(
+                        recipient=employer,
+                        notification_type=Notification.TYPE_PROJECT_ASSIGNED,
+                        title=f"Nouveau Projet: {project.name}",
+                        message=f"Vous êtes assigné au projet '{project.name}'",
+                        priority=Notification.PRIORITY_HIGH,
+                        related_project=project,
+                        data={
+                            'project_id': project.id,
+                            'project_name': project.name,
+                        }
+                    )
+                    if notification:
+                        count += 1
+                        self.stdout.write(f"   👥 Assignment: {project.name} → {employer.username}")
+        
+        return count
+    
+    def _resend_unsent_notifications(self, check_interval):
+        """Resend notifications that haven't been sent via SSE yet"""
+        unsent_threshold = timezone.now() - timedelta(seconds=check_interval)
+        
+        unsent_notifications = Notification.objects.filter(
+            sent_at__isnull=True,
+            created_at__lte=unsent_threshold,  # Created before last check
+            created_at__gte=timezone.now() - timedelta(minutes=5)  # But not too old
         )
         
         count = 0
-        for notification in unconfirmed:
+        for notification in unsent_notifications:
+            # Mark as sent to trigger SSE delivery
             notification.mark_as_sent()
             count += 1
-            self.stdout.write(f"   🔄 Resent project assignment to {notification.recipient.username}")
+            self.stdout.write(f"   🔄 Resent unsent: {notification.title}")
         
         return count

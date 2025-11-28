@@ -70,6 +70,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         allow_empty=True  # Add this to allow empty lists
     )
     invoices = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+    invoice_status = serializers.SerializerMethodField()
 
 
     status = serializers.ReadOnlyField()
@@ -87,8 +88,12 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
             "warranty_duration_display", "warranty_end_date", "verified_at", 
             "verified_by", "created_at", "updated_at", "created_by", 
             "is_verified", "status", "progress_percentage", "is_active", 
-            "is_completed"
+            "is_completed" ,"invoice_status"
         )
+    def get_invoice_status(self, obj):
+        # Get the latest invoice status or return None
+        latest_invoice = obj.invoices.order_by('-created_at').first()
+        return latest_invoice.status if latest_invoice else None
 
  
     def validate(self, data):

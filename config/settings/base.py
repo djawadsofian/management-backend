@@ -55,10 +55,14 @@ INSTALLED_APPS = [
 ASGI_APPLICATION = 'config.asgi.application'
 
 CRONJOBS = [
-    ('0 * * * *', 'apps.notifications.management.commands.check_upcoming_events.Command.handle'),
-    ('0 8,14,20 * * *', 'apps.notifications.management.commands.check_and_send_notifications.Command.handle'),
+    # Run every minute (at second 0 and second 30)
+    ('* * * * *', 'apps.notifications.management.commands.check_and_send_notifications.Command.handle'),
+    ('* * * * *', 'apps.notifications.management.commands.check_upcoming_events.Command.handle', '--check-window=2'),
+    
+    # Alternative: Use sleep for 30-second intervals
+    # ('* * * * *', 'apps.notifications.management.commands.check_and_send_notifications.Command.handle'),
+    # ('* * * * * sleep 30;', 'apps.notifications.management.commands.check_upcoming_events.Command.handle'),
 ]
-
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
