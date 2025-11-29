@@ -30,7 +30,7 @@ class SupplierViewSet(StandardFilterMixin, TimestampOrderingMixin, viewsets.Mode
     filterset_fields = ['is_active', 'city', 'wilaya']
     search_fields = ['name', 'company', 'email', 'phone', 'tax_id']
     ordering_fields = ['name', 'company', 'created_at']
-    ordering = ['name']
+    ordering = ['-created_at']
 
     def get_queryset(self):
         """Override to annotate with calculated fields for better performance"""

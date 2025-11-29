@@ -49,8 +49,8 @@ class ProductViewSet(
     # Filter/Search/Order configuration
     filterset_fields = ['sku', 'unit']
     search_fields = ['name', 'sku']
-    ordering_fields = ['name', 'quantity', 'reorder_threshold', 'buying_price', 'selling_price']
-    ordering = ['name']
+    ordering_fields = ['name', 'quantity', 'reorder_threshold', 'buying_price', 'selling_price' ,'created_at', 'updated_at']
+    ordering = ['-created_at']
 
   
 

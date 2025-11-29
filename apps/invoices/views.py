@@ -66,6 +66,7 @@ class InvoiceViewSet(
         'project__client__address__postal_code',  # Client postal code
     ]
     ordering_fields = ['issued_date', 'due_date', 'total', 'created_at']
+    ordering = ['-created_at']
 
     def filter_queryset(self, queryset):
         queryset = super().filter_queryset(queryset)
