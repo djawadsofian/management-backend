@@ -297,7 +297,7 @@ class Invoice(TimeStampedModel):
         self.status = self.STATUS_PAID
         self.paid_date = timezone.now().date() 
         self.deposit_price = self.total  
-        self.save(update_fields=['status','desposit_price', 'paid_date','updated_at'])
+        self.save(update_fields=['status','deposit_price','paid_date','updated_at'])
 
     @transaction.atomic
     def revert_to_draft(self):
