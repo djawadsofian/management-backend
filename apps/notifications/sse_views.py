@@ -12,9 +12,56 @@ from apps.notifications.services import NotificationService
 
 logger = logging.getLogger(__name__)
 
-# Remove multiprocessing Manager - not needed anymore
-# Just use regular dict for active connections
+# Dictionary to track active connections
 active_connections = {}
+
+
+@sync_to_async
+def get_unread_notifications(user_id):
+    """Get ALL unread notifications on initial connect"""
+    notifications = Notification.objects.filter(
+        recipient_id=user_id,
+        is_read=False
+    ).select_related('related_project', 'related_maintenance', 'related_product').order_by('created_at')
+    
+    result = []
+    for notification in notifications:
+        notification_data = {
+            'id': notification.id,
+            'type': notification.notification_type,
+            'title': notification.title,
+            'message': notification.message,
+            'priority': notification.priority,
+            'created_at': notification.created_at.isoformat(),
+            'is_read': notification.is_read,
+            'is_confirmed': notification.is_confirmed,
+            'data': notification.data or {},
+        }
+        
+        if notification.related_project:
+            notification_data['project'] = {
+                'id': notification.related_project.id,
+                'name': notification.related_project.name,
+            }
+        
+        if notification.related_maintenance:
+            notification_data['maintenance'] = {
+                'id': notification.related_maintenance.id,
+                'start_date': notification.related_maintenance.start_date.isoformat(),
+            }
+
+        if notification.related_product:
+            notification_data['product'] = {
+                'id': notification.related_product.id,
+                'name': notification.related_product.name,
+            }
+        
+        result.append(notification_data)
+        
+        # Mark as sent
+        notification.mark_as_sent()
+    
+    return result
 
 
 @sync_to_async
@@ -68,7 +115,7 @@ def get_new_notifications(user_id, last_check_time):
 
 @require_GET
 async def notification_stream(request):
-    """SSE endpoint - polls database for new notifications"""
+    """SSE endpoint - sends initial notifications then polls for new ones every 30 seconds"""
     user = request.user
     if not user.is_authenticated:
         from django.http import JsonResponse
@@ -79,38 +126,56 @@ async def notification_stream(request):
     async def event_stream():
         connection_id = f"{user.id}_{timezone.now().timestamp()}"
         active_connections[connection_id] = True
-        last_check_time = timezone.now()
         
         try:
-            # Send initial connection event
+            # Send connection event
             yield f"data: {json.dumps({'event': 'connected', 'message': 'Connected to notification stream', 'user_id': user.id})}\n\n"
             print(f"📤 Sent 'connected' event to user {user.id}")
             
-            # Poll for new notifications every 2 seconds
+            # SEND ALL UNREAD NOTIFICATIONS ON CONNECT
+            initial_notifications = await get_unread_notifications(user.id)
+            print(f"📬 Sending {len(initial_notifications)} initial unread notifications to user {user.id}")
+            
+            for notification_data in initial_notifications:
+                print(f"📤 Sending initial notification {notification_data['id']} to user {user.id}")
+                yield f"data: {json.dumps({'event': 'notification', 'data': notification_data})}\n\n"
+            
+            # Mark last check time AFTER sending initial notifications
+            last_check_time = timezone.now()
+            print(f"⏰ Initial check time set to {last_check_time}")
+            
+            # Poll for NEW notifications every 30 seconds
             while active_connections.get(connection_id, False):
                 try:
-                    # Check for new notifications
+                    # Check for new notifications created after last check
                     new_notifications = await get_new_notifications(user.id, last_check_time)
                     
+                    if new_notifications:
+                        print(f"📬 Found {len(new_notifications)} new notifications for user {user.id}")
+                    
                     for notification_data in new_notifications:
-                        print(f"📤 Sending notification {notification_data['id']} to user {user.id}")
+                        print(f"📤 Sending new notification {notification_data['id']} to user {user.id}")
                         yield f"data: {json.dumps({'event': 'notification', 'data': notification_data})}\n\n"
                     
                     # Update last check time
                     last_check_time = timezone.now()
                     
-                    # Send keepalive ping every 30 seconds
+                    # Send keepalive ping
                     yield f"data: {json.dumps({'event': 'ping', 'timestamp': int(timezone.now().timestamp())})}\n\n"
                     
-                    # Wait 2 seconds before next poll
-                    await asyncio.sleep(2)
+                    # Wait 30 seconds before next poll
+                    await asyncio.sleep(30)
                     
                 except Exception as e:
                     print(f"❌ Error in polling: {e}")
+                    logger.error(f"Error in polling for user {user.id}: {e}")
                     break
                     
         except GeneratorExit:
             print(f"🔴 Client disconnected: user {user.id}")
+        except Exception as e:
+            print(f"❌ Fatal error in event stream for user {user.id}: {e}")
+            logger.error(f"Fatal error in event stream: {e}")
         finally:
             if connection_id in active_connections:
                 del active_connections[connection_id]

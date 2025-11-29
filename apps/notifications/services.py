@@ -357,3 +357,22 @@ class NotificationService:
         return Notification.objects.filter(
             created_at__lt=cutoff_date
         ).delete()
+    
+
+
+    @staticmethod
+    def _should_send_immediate_notification(user, notification_type, related_object=None):
+        """
+        Check if immediate notification should be sent
+        More permissive than scheduled notifications
+        """
+        prefs = NotificationService._get_or_create_preferences(user)
+        
+        # Check if notification type is enabled
+        if not prefs.is_notification_enabled(notification_type):
+            return False
+        
+        # For immediate notifications, ignore quiet hours
+        # (critical notifications should always go through)
+        
+        return True
