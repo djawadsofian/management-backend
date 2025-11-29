@@ -106,24 +106,24 @@ class Project(TimeStampedModel):
         # Delete only AUTO type maintenances
         self.maintenances.filter(maintenance_type=Maintenance.TYPE_AUTO).delete()
         
-        # Calculate number of maintenance instances needed
-        if self.interval_maintenance > 0:
+        # Check if we have valid maintenance settings before creating
+        if (self.duration_maintenance and self.interval_maintenance and 
+            self.end_date and self.interval_maintenance > 0):
+            
             num_maintenances = self.duration_maintenance // self.interval_maintenance
-        else:
-            num_maintenances = 0
             
-        # Create maintenance instances with AUTO type
-        for i in range(num_maintenances):
-            months_after_project_end = self.interval_maintenance * (i + 1)
-            
-            start_date = self.end_date + relativedelta(months=months_after_project_end)
-            
-            Maintenance.objects.create(
-                project=self,
-                start_date=start_date,
-                end_date=start_date,  # Same as start date as specified
-                maintenance_type=Maintenance.TYPE_AUTO  # Set as AUTO type
-            )
+            # Create maintenance instances with AUTO type
+            for i in range(num_maintenances):
+                months_after_project_end = self.interval_maintenance * (i + 1)
+                
+                start_date = self.end_date + relativedelta(months=months_after_project_end)
+                
+                Maintenance.objects.create(
+                    project=self,
+                    start_date=start_date,
+                    end_date=start_date,  # Same as start date as specified
+                    maintenance_type=Maintenance.TYPE_AUTO  # Set as AUTO type
+                )
 
     # Verification Methods
     def verify(self, by_user):

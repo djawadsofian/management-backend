@@ -9,7 +9,7 @@ Optimized Dashboard Views with Aggregation Queries
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from apps.core.permissions import IsAdminOrAssistant
 from rest_framework.decorators import action
 from django.db.models import (
     Count, Sum, Avg, Q, F, DecimalField, 
@@ -30,11 +30,12 @@ from config import settings
 
 
 
+
 class InvoiceNetRevenueView(APIView):
     """
     Calculate net revenue for a specific invoice
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrAssistant]
     
     def get(self, request, invoice_id):
         """
@@ -98,7 +99,7 @@ class DashboardSummaryView(APIView):
     Main dashboard summary with key metrics
     Optimized with single-query aggregations
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrAssistant]
     
     def get(self, request):
 
@@ -366,7 +367,7 @@ class ProjectAnalyticsView(APIView):
     """
     Detailed project analytics with trends
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrAssistant]
     
     def get(self, request):
         cache_key = 'project_analytics'
@@ -503,12 +504,29 @@ class ProjectAnalyticsView(APIView):
         
         cache.set(cache_key, response_data, 600)  # 10 minutes
         return Response(response_data)
+    
+
 class FinancialAnalyticsView(APIView):
     """
     Financial analytics with revenue tracking using paid_date
     """
-    permission_classes = [IsAuthenticated]
-    
+    permission_classes = [IsAdminOrAssistant ]
+
+    def calculate_invoice_net_revenue(self, invoices):
+        """Calculate net revenue for a set of invoices"""
+        total_net = Decimal('0.00')
+        for invoice in invoices:
+            invoice_net = Decimal('0.00')
+            for line in invoice.lines.all():
+                if line.product:
+                    cost = line.quantity * line.product.buying_price
+                    line_net = line.line_total - cost
+                else:
+                    line_net = line.line_total
+                invoice_net += line_net
+            total_net += invoice_net
+        return total_net
+        
     def get(self, request):
         # Get date range from params
         start_date_param = request.GET.get('start_date')
@@ -558,7 +576,19 @@ class FinancialAnalyticsView(APIView):
             revenue=Sum('total'),
             invoice_count=Count('id'),
         ).order_by('date')
-        
+
+        # Add net revenue to each day
+        for day_data in revenue_trend:
+            date_str = day_data['date']
+            # Convert string back to date object
+            date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            day_invoices = Invoice.objects.filter(
+                paid_date__gte=date_obj,
+                paid_date__lt=date_obj + timedelta(days=1),
+                status=Invoice.STATUS_PAID
+            ).prefetch_related('lines__product')
+            day_data['net_revenue'] = float(self.calculate_invoice_net_revenue(day_invoices))
+                
         # ===== NET REVENUE CALCULATION =====
         # Get all paid invoices in date range
         paid_invoices = Invoice.objects.filter(
@@ -567,25 +597,8 @@ class FinancialAnalyticsView(APIView):
             status=Invoice.STATUS_PAID
         ).prefetch_related('lines__product')
         
-        total_net_revenue = Decimal('0.00')
-        total_revenue = Decimal('0.00')
-        
-        for invoice in paid_invoices:
-            invoice_net_revenue = Decimal('0.00')
-            
-            for line in invoice.lines.all():
-                if line.product:
-                    # For product lines: line_total - (quantity * buying_price)
-                    cost = line.quantity * line.product.buying_price
-                    line_net = line.line_total - cost
-                else:
-                    # For description-only lines: use line_total as net revenue
-                    line_net = line.line_total
-                
-                invoice_net_revenue += line_net
-            
-            total_net_revenue += invoice_net_revenue
-            total_revenue += invoice.total
+        total_net_revenue = self.calculate_invoice_net_revenue(paid_invoices)
+        total_revenue = sum(invoice.total for invoice in paid_invoices) 
         
         # ===== TOP REVENUE CLIENTS (using paid_date) =====
         top_revenue_clients = Client.objects.annotate(
@@ -648,6 +661,7 @@ class FinancialAnalyticsView(APIView):
             total_paid_all_time=Count('id', filter=Q(status=Invoice.STATUS_PAID)),
             total_revenue_issued=Sum('total', filter=Q(status=Invoice.STATUS_ISSUED)),
             total_revenue_paid_all_time=Sum('total', filter=Q(status=Invoice.STATUS_PAID)),
+            total_deposit_issued=Sum('deposit_price', filter=Q(status=Invoice.STATUS_ISSUED)), 
         )
         
         response_data = {
@@ -677,6 +691,9 @@ class FinancialAnalyticsView(APIView):
                 'paid_invoices_all_time': current_invoice_stats['total_paid_all_time'] or 0,
                 'revenue_issued': float(current_invoice_stats['total_revenue_issued'] or 0),
                 'revenue_paid_all_time': float(current_invoice_stats['total_revenue_paid_all_time'] or 0),
+                'total_deposit_issued': float(current_invoice_stats['total_deposit_issued'] or 0), 
+                'total_debts': float((current_invoice_stats['total_revenue_issued'] or 0) -
+                        (current_invoice_stats['total_deposit_issued'] or 0)), 
             },
             'top_revenue_clients': top_revenue_data,
         }
@@ -689,7 +706,7 @@ class InventoryAnalyticsView(APIView):
     """
     Inventory analytics with stock health
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrAssistant]
     
     def get(self, request):
         cache_key = 'inventory_analytics'
@@ -826,7 +843,7 @@ class RecentActivityView(APIView):
     Recent activity feed with pagination
     Optimized to prevent memory overload
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrAssistant]
     
     def get(self, request):
         limit = min(int(request.GET.get('limit', 20)), 50)  # Max 50
