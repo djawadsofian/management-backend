@@ -164,7 +164,7 @@ async def notification_stream(request):
                     yield f"data: {json.dumps({'event': 'ping', 'timestamp': int(timezone.now().timestamp())})}\n\n"
                     
                     # Wait 30 seconds before next poll
-                    await asyncio.sleep(30)
+                    await asyncio.sleep(2)
                     
                 except Exception as e:
                     print(f"❌ Error in polling: {e}")

@@ -116,7 +116,7 @@ class Command(BaseCommand):
                     is_active=True
                 ).union(
                     project.assigned_employers.all()
-                ).distinct()
+                )
                 
                 for user in recipients:
                     # Check if 24h notification already exists for this project and user
@@ -228,7 +228,7 @@ class Command(BaseCommand):
                     is_active=True
                 ).union(
                     maintenance.project.assigned_employers.all()
-                ).distinct()
+                )
                 
                 for user in recipients:
                     # Check if 24h notification already exists for this maintenance and user
