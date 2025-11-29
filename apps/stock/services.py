@@ -34,6 +34,7 @@ class StockService:
             ValueError: If invalid parameters provided
         """
         from apps.stock.models import Product
+        from django.db.models import F
         
         # Convert quantity to absolute value
         quantity = abs(Decimal(str(quantity)))
@@ -47,20 +48,29 @@ class StockService:
         else:
             product = Product.objects.select_for_update().get(pk=product.pk)
         
-        # Perform operation
+        # Perform operation using direct update to avoid F expression issues
         if operation == 'subtract':
             if product.quantity < quantity:
                 raise InsufficientStockError(
                     f"Insufficient stock for {product.name}. "
                     f"Available: {product.quantity}, Requested: {quantity}"
                 )
-            product.quantity = F('quantity') - quantity
+            
+            # Use direct update instead of F expression
+            if quantity > 0:
+                Product.objects.filter(pk=product.pk).update(
+                    quantity=F('quantity') - quantity
+                )
+            
         elif operation == 'add':
-            product.quantity = F('quantity') + quantity
+            # Use direct update instead of F expression
+            if quantity > 0:
+                Product.objects.filter(pk=product.pk).update(
+                    quantity=F('quantity') + quantity
+                )
         else:
             raise ValueError("Operation must be 'subtract' or 'add'")
         
-        product.save(update_fields=['quantity', 'updated_at'])
         product.refresh_from_db()
         
         return product
