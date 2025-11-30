@@ -5,7 +5,6 @@ Production-specific settings.
 from config.settings.base import BASE_DIR, REST_FRAMEWORK
 from .base import *
 
-DEBUG = False
 
 # Security settings
 SECURE_SSL_REDIRECT = True
