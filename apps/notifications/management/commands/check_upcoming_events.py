@@ -88,7 +88,6 @@ class Command(BaseCommand):
         if total_deleted > 0:
             self.stdout.write(f"🧹 Cleaned up {total_deleted} notifications for started events ({project_notifications_deleted} projects, {maintenance_notifications_deleted} maintenances)")
 
-    # ... rest of the _check_upcoming_projects and _check_upcoming_maintenances methods remain the same ...
     def _check_upcoming_projects(self, dry_run=False):
         """Check for projects starting in 24h and 48h"""
         now = timezone.now().date()
@@ -132,8 +131,8 @@ class Command(BaseCommand):
                             notification = NotificationService.create_notification(
                                 recipient=user,
                                 notification_type=Notification.TYPE_PROJECT_STARTING_SOON,
-                                title=f"🚀 Projet Demain: {project.name}",
-                                message=f"Le projet '{project.name}' commence DEMAIN pour le client {project.client.name}. Préparez-vous!",
+                                title=f"🚀 Projet dans moins de 24h: {project.name}",
+                                message=f"Le projet '{project.name}' commence DEMAIN ({project.start_date.strftime('%d/%m/%Y')}) pour le client {project.client.name}.",
                                 priority=Notification.PRIORITY_HIGH,
                                 related_project=project,
                                 data={
@@ -141,7 +140,7 @@ class Command(BaseCommand):
                                     'project_name': project.name,
                                     'client_name': project.client.name,
                                     'start_date': project.start_date.isoformat(),
-                                    'hours_until_start': 24,
+                                    'days_until_start': 1,
                                     'notification_tier': 'admin_assistant_employer_24h',
                                     'event_type': 'project_24h'
                                 }
@@ -175,8 +174,8 @@ class Command(BaseCommand):
                             notification = NotificationService.create_notification(
                                 recipient=employer,
                                 notification_type=Notification.TYPE_PROJECT_STARTING_SOON,
-                                title=f"📅 Projet dans 2 Jours: {project.name}",
-                                message=f"Le projet '{project.name}' commence dans 2 jours. Date: {project.start_date.strftime('%d/%m/%Y')}",
+                                title=f"📅 Projet dans moins de 48h: {project.name}",
+                                message=f"Le projet '{project.name}' commence dans 2 jours ({project.start_date.strftime('%d/%m/%Y')}).",
                                 priority=Notification.PRIORITY_MEDIUM,
                                 related_project=project,
                                 data={
@@ -184,7 +183,7 @@ class Command(BaseCommand):
                                     'project_name': project.name,
                                     'client_name': project.client.name,
                                     'start_date': project.start_date.isoformat(),
-                                    'hours_until_start': 48,
+                                    'days_until_start': 2,
                                     'notification_tier': 'employer_48h',
                                     'event_type': 'project_48h'
                                 }
@@ -244,8 +243,8 @@ class Command(BaseCommand):
                             notification = NotificationService.create_notification(
                                 recipient=user,
                                 notification_type=Notification.TYPE_MAINTENANCE_STARTING_SOON,
-                                title=f"🔧 Maintenance Demain: {maintenance.project.name}",
-                                message=f"Maintenance prévue DEMAIN pour le projet '{maintenance.project.name}'.",
+                                title=f"🔧 Maintenance dans moins de 24h: {maintenance.project.name}",
+                                message=f"Maintenance prévue DEMAIN ({maintenance.start_date.strftime('%d/%m/%Y')}) pour le projet '{maintenance.project.name}'.",
                                 priority=Notification.PRIORITY_HIGH,
                                 related_project=maintenance.project,
                                 related_maintenance=maintenance,
@@ -254,7 +253,7 @@ class Command(BaseCommand):
                                     'project_id': maintenance.project.id,
                                     'project_name': maintenance.project.name,
                                     'start_date': maintenance.start_date.isoformat(),
-                                    'hours_until_start': 24,
+                                    'days_until_start': 1,
                                     'maintenance_type': maintenance.maintenance_type,
                                     'notification_tier': 'admin_assistant_employer_24h',
                                     'event_type': 'maintenance_24h'
@@ -289,8 +288,8 @@ class Command(BaseCommand):
                             notification = NotificationService.create_notification(
                                 recipient=employer,
                                 notification_type=Notification.TYPE_MAINTENANCE_STARTING_SOON,
-                                title=f"📋 Maintenance dans 2 Jours: {maintenance.project.name}",
-                                message=f"Maintenance prévue dans 2 jours pour le projet '{maintenance.project.name}'.",
+                                title=f"📋 Maintenance dans moins de 48h: {maintenance.project.name}",
+                                message=f"Maintenance prévue dans 2 jours ({maintenance.start_date.strftime('%d/%m/%Y')}) pour le projet '{maintenance.project.name}'.",
                                 priority=Notification.PRIORITY_MEDIUM,
                                 related_project=maintenance.project,
                                 related_maintenance=maintenance,
@@ -299,7 +298,7 @@ class Command(BaseCommand):
                                     'project_id': maintenance.project.id,
                                     'project_name': maintenance.project.name,
                                     'start_date': maintenance.start_date.isoformat(),
-                                    'hours_until_start': 48,
+                                    'days_until_start': 2,
                                     'maintenance_type': maintenance.maintenance_type,
                                     'notification_tier': 'employer_48h',
                                     'event_type': 'maintenance_48h'
