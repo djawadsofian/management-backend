@@ -344,8 +344,9 @@ class MaintenanceViewSet(
     def perform_create(self, serializer):
         """Track who created the maintenance"""
         instance = serializer.save()
-        # Set user for signal handler
-        instance._created_by = get_current_user() or self.request.user
+        # Set user for signal handler - ensure it's set BEFORE saving
+        instance._created_by = self.request.user  # Use self.request.user directly
+        instance.save()
         return instance
 
     def perform_update(self, serializer):

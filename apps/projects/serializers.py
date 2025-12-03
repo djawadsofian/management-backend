@@ -31,6 +31,14 @@ class MaintenanceSerializer(serializers.ModelSerializer):
         """Override create to set maintenance_type to MANUAL for user-created maintenances"""
         if 'maintenance_type' not in validated_data:
             validated_data['maintenance_type'] = Maintenance.TYPE_MANUAL
+
+        request = self.context.get('request')
+        if request and request.user:
+            # Set the instance with _created_by attribute
+            instance = Maintenance(**validated_data)
+            instance._created_by = request.user
+            instance.save()
+            return instance
         return super().create(validated_data)
 
 class ProjectListSerializer(serializers.ModelSerializer):
