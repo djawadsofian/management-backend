@@ -132,6 +132,7 @@ class ProjectViewSet(
             )
         
         try:
+            project._modified_by = request.user 
             project.verify(by_user=request.user)
             serializer = self.get_serializer(project)
             return Response(serializer.data)
@@ -154,6 +155,7 @@ class ProjectViewSet(
             )
         
         try:
+            project._modified_by = request.user 
             project.unverify()
             serializer = self.get_serializer(project)
             return Response(serializer.data)
@@ -163,11 +165,12 @@ class ProjectViewSet(
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    # In ProjectViewSet.perform_update()
     def perform_update(self, serializer):
         """Track who modified the project"""
+        # Set user BEFORE saving
+        serializer.instance._modified_by = self.request.user
         instance = serializer.save()
-        # Set user for signal handler
-        instance._modified_by = get_current_user() or self.request.user
         return instance
 
     def perform_destroy(self, instance):
@@ -347,9 +350,8 @@ class MaintenanceViewSet(
 
     def perform_update(self, serializer):
         """Track who modified the maintenance"""
+        serializer.instance._modified_by = self.request.user
         instance = serializer.save()
-        # Set user for signal handler
-        instance._modified_by = get_current_user() or self.request.user
         return instance
 
     def perform_destroy(self, instance):

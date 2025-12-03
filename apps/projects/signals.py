@@ -1,11 +1,10 @@
 # apps/projects/signals.py
 """
-Signal handlers for Project and Maintenance models - IMMEDIATE notifications
-FIXED VERSION:
-1. Project verified → sends PROJECT_ASSIGNED (not PROJECT_MODIFIED)
-2. Project unverified → removes ALL notifications for that project
-3. Employers changed → handles additions/removals correctly
-4. Project/Maintenance modified → does NOT remove previous notifications
+FIXED Signal handlers for Project and Maintenance models
+Key fixes:
+1. Set _modified_by BEFORE save() so pre_save can access it
+2. Properly track changes in pre_save
+3. Send notifications in post_save after changes are confirmed
 """
 from django.db.models.signals import post_save, pre_delete, pre_save, m2m_changed
 from django.dispatch import receiver
@@ -13,6 +12,7 @@ from django.utils import timezone
 from apps.projects.models import Project, Maintenance
 from apps.notifications.services import NotificationService
 from apps.notifications.models import Notification
+from apps.core.middleware import get_current_user
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,10 @@ def track_project_changes(sender, instance, **kwargs):
     """
     Track previous project state before save for immediate notifications
     """
+    # Get current user if not already set
+    if not hasattr(instance, '_modified_by'):
+        instance._modified_by = get_current_user()
+    
     if instance.pk:
         try:
             previous = Project.objects.get(pk=instance.pk)
@@ -33,18 +37,12 @@ def track_project_changes(sender, instance, **kwargs):
             instance._previous_end_date = previous.end_date
             instance._previous_name = previous.name
             instance._previous_description = previous.description
+            instance._has_changes = True
         except Project.DoesNotExist:
-            instance._previous_is_verified = False
-            instance._previous_start_date = None
-            instance._previous_end_date = None
-            instance._previous_name = None
-            instance._previous_description = None
+            instance._has_changes = False
     else:
         instance._previous_is_verified = False
-        instance._previous_start_date = None
-        instance._previous_end_date = None
-        instance._previous_name = None
-        instance._previous_description = None
+        instance._has_changes = False
 
 
 @receiver(post_save, sender=Project)
@@ -58,31 +56,39 @@ def project_immediate_notifications(sender, instance, created, **kwargs):
         # New project created - no notifications until verified
         return
 
+    if not hasattr(instance, '_has_changes') or not instance._has_changes:
+        return
+
+    # Get the user who made the change
+    modified_by = getattr(instance, '_modified_by', None)
+    
+    if not modified_by:
+        print("⚠️ No modified_by user found, skipping notifications")
+        return
+
     # Existing project modified
-    if hasattr(instance, '_previous_is_verified'):
-        previous_verified = instance._previous_is_verified
-        current_verified = instance.is_verified
-        
-        # Project just got verified - send PROJECT_ASSIGNED to assigned employers
-        if not previous_verified and current_verified:
-            print(f"✅ Project verified: {instance.name}")
-            _notify_project_verified_as_assigned(instance)
-        
-        # Project just got UNverified - remove ALL notifications for this project
-        elif previous_verified and not current_verified:
-            print(f"❌ Project unverified: {instance.name}")
-            _remove_all_project_notifications(instance)
-        
-        # Project modified (dates changed, name, description, etc.) - notify assigned employers
-        # DO NOT REMOVE previous notifications
-        elif current_verified and (
-            instance._previous_start_date != instance.start_date or
-            instance._previous_end_date != instance.end_date or
-            instance._previous_name != instance.name or
-            instance._previous_description != instance.description
-        ):
-            print(f"✏️ Project modified: {instance.name}")
-            _notify_project_modified_immediate(instance)
+    previous_verified = getattr(instance, '_previous_is_verified', False)
+    current_verified = instance.is_verified
+    
+    # Project just got verified - send PROJECT_ASSIGNED to assigned employers
+    if not previous_verified and current_verified:
+        print(f"✅ Project verified: {instance.name}")
+        _notify_project_verified_as_assigned(instance)
+    
+    # Project just got UNverified - remove ALL notifications for this project
+    elif previous_verified and not current_verified:
+        print(f"❌ Project unverified: {instance.name}")
+        _remove_all_project_notifications(instance)
+    
+    # Project modified (dates changed, name, description, etc.) - notify assigned employers
+    elif current_verified and (
+        getattr(instance, '_previous_start_date', None) != instance.start_date or
+        getattr(instance, '_previous_end_date', None) != instance.end_date or
+        getattr(instance, '_previous_name', None) != instance.name or
+        getattr(instance, '_previous_description', None) != instance.description
+    ):
+        print(f"✏️ Project modified: {instance.name} by {modified_by.username}")
+        _notify_project_modified_immediate(instance, modified_by)
 
 
 @receiver(m2m_changed, sender=Project.assigned_employers.through)
@@ -147,37 +153,6 @@ def project_employers_changed_immediate(sender, instance, action, pk_set, **kwar
             
             # Remove ALL notifications of this project for the removed employer
             _remove_project_notifications_for_employer(instance, employer)
-    
-    elif action == "pre_clear":
-        # All employers about to be removed - store them for post_clear
-        instance._employers_before_clear = set(instance.assigned_employers.values_list('id', flat=True))
-    
-    elif action == "post_clear":
-        # All employers removed
-        if hasattr(instance, '_employers_before_clear'):
-            from apps.users.models import CustomUser
-            removed_employers = CustomUser.objects.filter(pk__in=instance._employers_before_clear)
-            
-            for employer in removed_employers:
-                # Send unassignment notification
-                NotificationService.create_notification(
-                    recipient=employer,
-                    notification_type=Notification.TYPE_PROJECT_MODIFIED,
-                    title=f"⚠️ Projet Retiré: {instance.name}",
-                    message=f"Vous n'êtes plus assigné au projet '{instance.name}'.",
-                    priority=Notification.PRIORITY_MEDIUM,
-                    related_project=instance,
-                    data={
-                        'project_id': instance.id,
-                        'project_name': instance.name,
-                        'unassigned_at': timezone.now().isoformat(),
-                        'trigger': 'all_employers_removed'
-                    }
-                )
-                print(f"📤 Sent unassignment notification to {employer.username}")
-                
-                # Remove ALL notifications for this employer
-                _remove_project_notifications_for_employer(instance, employer)
 
 
 @receiver(pre_delete, sender=Project)
@@ -187,10 +162,12 @@ def project_deleted_immediate(sender, instance, **kwargs):
     """
     print(f"🗑️ Project deleted: {instance.name}")
     
-    # First, send deletion notifications to assigned employers
-    _notify_project_deletion_to_employers(instance)
+    # Get the user who deleted it
+    deleted_by = getattr(instance, '_deleted_by', None)
     
-    # All project notifications will be cascade deleted automatically by FK
+    if deleted_by:
+        # Send deletion notifications to assigned employers
+        _notify_project_deletion_to_employers(instance, deleted_by)
 
 
 # ========== MAINTENANCE SIGNALS ==========
@@ -198,17 +175,24 @@ def project_deleted_immediate(sender, instance, **kwargs):
 @receiver(pre_save, sender=Maintenance)
 def track_maintenance_changes(sender, instance, **kwargs):
     """Track previous maintenance state for modification detection"""
+    # Get current user if not already set
+    if not hasattr(instance, '_modified_by') and not hasattr(instance, '_created_by'):
+        current_user = get_current_user()
+        if instance.pk:
+            instance._modified_by = current_user
+        else:
+            instance._created_by = current_user
+    
     if instance.pk:
         try:
             previous = Maintenance.objects.get(pk=instance.pk)
             instance._previous_start_date = previous.start_date
             instance._previous_end_date = previous.end_date
+            instance._has_changes = True
         except Maintenance.DoesNotExist:
-            instance._previous_start_date = None
-            instance._previous_end_date = None
+            instance._has_changes = False
     else:
-        instance._previous_start_date = None
-        instance._previous_end_date = None
+        instance._has_changes = False
 
 
 @receiver(post_save, sender=Maintenance)
@@ -220,22 +204,26 @@ def maintenance_immediate_notifications(sender, instance, created, **kwargs):
     if instance.maintenance_type != Maintenance.TYPE_MANUAL:
         return
     
-    # Get the user who made the change
-    user = getattr(instance, '_created_by', None) or getattr(instance, '_modified_by', None)
-    
-    if not user:
-        return
-    
     if created:
         # New manual maintenance added - immediate notification
-        _notify_maintenance_added_immediate(instance, user)
+        created_by = getattr(instance, '_created_by', None)
+        if created_by:
+            print(f"🛠️ New maintenance created by {created_by.username}")
+            _notify_maintenance_added_immediate(instance, created_by)
+        else:
+            print("⚠️ No created_by user found for maintenance")
     else:
         # Maintenance modified - check if dates actually changed
-        if (hasattr(instance, '_previous_start_date') and 
-            (instance._previous_start_date != instance.start_date or
-             instance._previous_end_date != instance.end_date)):
-            # DO NOT remove previous notifications, just send new one
-            _notify_maintenance_modified_immediate(instance, user)
+        if (hasattr(instance, '_has_changes') and instance._has_changes and
+            (getattr(instance, '_previous_start_date', None) != instance.start_date or
+             getattr(instance, '_previous_end_date', None) != instance.end_date)):
+            
+            modified_by = getattr(instance, '_modified_by', None)
+            if modified_by:
+                print(f"✏️ Maintenance modified by {modified_by.username}")
+                _notify_maintenance_modified_immediate(instance, modified_by)
+            else:
+                print("⚠️ No modified_by user found for maintenance")
 
 
 @receiver(pre_delete, sender=Maintenance)
@@ -261,6 +249,7 @@ def maintenance_deleted_immediate(sender, instance, **kwargs):
     deleted_by = getattr(instance, '_deleted_by', None)
     
     if deleted_by:
+        print(f"🗑️ Maintenance deleted by {deleted_by.username}")
         _notify_maintenance_deleted_immediate(maintenance_data, deleted_by)
 
 
@@ -288,30 +277,27 @@ def _remove_project_notifications_for_employer(project, employer):
         print(f"🧹 Removed {deleted_count} notifications for {employer.username} on project {project.name}")
 
 
-def _notify_project_deletion_to_employers(project):
+def _notify_project_deletion_to_employers(project, deleted_by):
     """Send deletion notification to assigned employers"""
-    deleted_by = getattr(project, '_deleted_by', None)
-    
-    if deleted_by:
-        for employer in project.assigned_employers.all():
-            if employer != deleted_by:  # Don't notify the person who deleted
-                NotificationService.create_notification(
-                    recipient=employer,
-                    notification_type=Notification.TYPE_PROJECT_DELETED,
-                    title=f"🗑️ Projet Supprimé: {project.name}",
-                    message=f"Le projet '{project.name}' a été supprimé par {deleted_by.get_full_name() or deleted_by.username}.",
-                    priority=Notification.PRIORITY_HIGH,
-                    related_project=None,
-                    data={
-                        'project_id': project.id,
-                        'project_name': project.name,
-                        'client_name': project.client.name,
-                        'deleted_by': deleted_by.get_full_name() or deleted_by.username,
-                        'deleted_at': timezone.now().isoformat(),
-                        'trigger': 'project_deleted'
-                    }
-                )
-                print(f"📤 Sent deletion notification to {employer.username}")
+    for employer in project.assigned_employers.all():
+        if employer != deleted_by:  # Don't notify the person who deleted
+            NotificationService.create_notification(
+                recipient=employer,
+                notification_type=Notification.TYPE_PROJECT_DELETED,
+                title=f"🗑️ Projet Supprimé: {project.name}",
+                message=f"Le projet '{project.name}' a été supprimé par {deleted_by.get_full_name() or deleted_by.username}.",
+                priority=Notification.PRIORITY_HIGH,
+                related_project=None,
+                data={
+                    'project_id': project.id,
+                    'project_name': project.name,
+                    'client_name': project.client.name,
+                    'deleted_by': deleted_by.get_full_name() or deleted_by.username,
+                    'deleted_at': timezone.now().isoformat(),
+                    'trigger': 'project_deleted'
+                }
+            )
+            print(f"📤 Sent deletion notification to {employer.username}")
 
 
 def _notify_project_verified_as_assigned(project):
@@ -340,30 +326,28 @@ def _notify_project_verified_as_assigned(project):
         logger.info(f"Project verified notification sent to {employer.username}")
 
 
-def _notify_project_modified_immediate(project):
+def _notify_project_modified_immediate(project, modified_by):
     """
-    Send PROJECT_MODIFIED notification - DO NOT remove previous notifications
+    Send PROJECT_MODIFIED notification
     """
-    modified_by = getattr(project, '_modified_by', None)
-    
-    if modified_by:
-        for employer in project.assigned_employers.exclude(id=modified_by.id):
-            NotificationService.create_notification(
-                recipient=employer,
-                notification_type=Notification.TYPE_PROJECT_MODIFIED,
-                title=f"✏️ Projet Modifié: {project.name}",
-                message=f"Le projet '{project.name}' a été modifié par {modified_by.get_full_name() or modified_by.username}.",
-                priority=Notification.PRIORITY_MEDIUM,
-                related_project=project,
-                data={
-                    'project_id': project.id,
-                    'project_name': project.name,
-                    'modified_by': modified_by.get_full_name() or modified_by.username,
-                    'modified_at': timezone.now().isoformat(),
-                    'trigger': 'project_modified'
-                }
-            )
-            print(f"📤 Sent PROJECT_MODIFIED to {employer.username}")
+    for employer in project.assigned_employers.exclude(id=modified_by.id):
+        NotificationService.create_notification(
+            recipient=employer,
+            notification_type=Notification.TYPE_PROJECT_MODIFIED,
+            title=f"✏️ Projet Modifié: {project.name}",
+            message=f"Le projet '{project.name}' a été modifié par {modified_by.get_full_name() or modified_by.username}.",
+            priority=Notification.PRIORITY_MEDIUM,
+            related_project=project,
+            data={
+                'project_id': project.id,
+                'project_name': project.name,
+                'client_name': project.client.name,
+                'modified_by': modified_by.get_full_name() or modified_by.username,
+                'modified_at': timezone.now().isoformat(),
+                'trigger': 'project_modified'
+            }
+        )
+        print(f"📤 Sent PROJECT_MODIFIED to {employer.username}")
 
 
 def _notify_maintenance_added_immediate(maintenance, created_by):
@@ -392,7 +376,7 @@ def _notify_maintenance_added_immediate(maintenance, created_by):
 
 def _notify_maintenance_modified_immediate(maintenance, modified_by):
     """
-    Send MAINTENANCE_MODIFIED notification - DO NOT remove previous ones
+    Send MAINTENANCE_MODIFIED notification
     """
     for employer in maintenance.project.assigned_employers.exclude(id=modified_by.id):
         NotificationService.create_notification(
