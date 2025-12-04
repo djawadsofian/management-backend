@@ -397,6 +397,14 @@ def maintenance_deleted_immediate(sender, instance, **kwargs):
     if instance.maintenance_type != Maintenance.TYPE_MANUAL:
         return
     
+    # NEW: Remove all existing notifications for this maintenance
+    deleted_count, _ = Notification.objects.filter(
+        related_maintenance=instance
+    ).delete()
+    
+    if deleted_count > 0:
+        print(f"🧹 Removed {deleted_count} notifications for deleted maintenance")
+    
     maintenance_data = {
         'maintenance_id': instance.id,
         'project_id': instance.project.id,
