@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'apps.dashboard',
     'apps.notifications', 
     'apps.supplier',
+    'apps.pack',
 ]
 
 ASGI_APPLICATION = 'config.asgi.application'

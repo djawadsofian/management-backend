@@ -44,4 +44,5 @@ urlpatterns = [
     path('api/stock/', include('apps.stock.urls')),
     path('api/', include('apps.notifications.urls')),
     path('api/', include('apps.supplier.urls')),
+    path('api/', include('apps.pack.urls')),
 ]
