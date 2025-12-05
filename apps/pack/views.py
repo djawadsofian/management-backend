@@ -26,13 +26,7 @@ class PackViewSet(
     AdminWritePermissionMixin,
     viewsets.ModelViewSet
 ):
-    """
-    ViewSet for managing packs.
-    
-    Permissions:
-        - List/Retrieve: Authenticated users
-        - Create/Update/Delete: Admins and Assistants only
-    """
+   
     queryset = Pack.objects.prefetch_related('lines', 'lines__product')
     pagination_class = StaticPagination
     permission_classes = [IsAdminOrAssistant]
@@ -42,31 +36,47 @@ class PackViewSet(
     ordering_fields = ['name', 'created_at']
     ordering = ['name']
 
-    
-
     def get_serializer_class(self):
         if self.action == 'create':
             return PackCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return PackCreateSerializer  # Use the same serializer for updates
         return PackSerializer
 
-    @action(detail=True, methods=['post'], url_path='add-line')
     @transaction.atomic
-    def add_line(self, request, pk=None):
+    def update(self, request, *args, **kwargs):
         """
-        Add a line item to a pack.
+        Handle PUT and PATCH requests to update pack and its lines.
         
-        Request body:
+        For PATCH (partial update):
             {
-                "product": 1,
-                "quantity": 5,
-                "unit_price": 100.00,
-                "discount": 10.00,
-                "description": "Optional description"
+                "name": "Updated Pack Name",
+                "lines": [
+                    {
+                        "id": 1,  # Update existing line
+                        "product": 1,
+                        "quantity": 10,
+                        "unit_price": 100.00,
+                        "discount": 5.00,
+                        "description": "Updated description"
+                    },
+                    {
+                        "product": 2,  # Create new line (no ID)
+                        "quantity": 5,
+                        "unit_price": 50.00,
+                        "discount": 0.00
+                    }
+                ]
             }
+            
+        Note: Lines not included in the request will be deleted.
+        For keeping existing lines, include them with their IDs.
         """
-        pack = self.get_object()
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
         
-        serializer = LineSerializer(data=request.data)
+        # Use PackCreateSerializer for updates to handle lines
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
         
         if not serializer.is_valid():
             error_message = self._get_serializer_error_message(serializer.errors)
@@ -76,75 +86,56 @@ class PackViewSet(
             )
         
         try:
-            line = serializer.save(pack=pack)
-            return Response(
-                LineSerializer(line).data,
-                status=status.HTTP_201_CREATED
-            )
+            self.perform_update(serializer)
+            return Response(serializer.data)
         except Exception as e:
             return Response(
-                {"message": f"Erreur lors de l'ajout de la ligne: {str(e)}"},
+                {"message": f"Erreur lors de la mise à jour: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-    @action(detail=True, methods=['post'], url_path='add-lines')
     @transaction.atomic
-    def add_lines(self, request, pk=None):
-        """
-        Add multiple line items to a pack in bulk.
+    def perform_update(self, serializer):
+        """Custom update logic to handle lines"""
+        instance = serializer.instance
+        lines_data = serializer.validated_data.pop('lines', None)
         
-        Request body:
-            [
-                {
-                    "product": 1,
-                    "quantity": 5,
-                    "unit_price": 100.00,
-                    "discount": 10.00
-                },
-                {
-                    "product": 2, 
-                    "quantity": 2,
-                    "unit_price": 50.00,
-                    "discount": 0.00
-                }
-            ]
-        """
-        pack = self.get_object()
+        # Update pack fields
+        for attr, value in serializer.validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
         
-        lines_data = request.data
-        if not isinstance(lines_data, list):
-            return Response(
-                {"message": "Données attendues: une liste d'articles"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        created_lines = []
-        errors = []
-        
-        for index, line_data in enumerate(lines_data):
-            serializer = LineSerializer(data=line_data)
+        # If lines data is provided in the request, update lines
+        if lines_data is not None:
+            # Get IDs of lines in the request
+            request_line_ids = []
+            for line_data in lines_data:
+                line_id = line_data.get('id')
+                if line_id:
+                    request_line_ids.append(line_id)
             
-            if serializer.is_valid():
-                try:
-                    line = serializer.save(pack=pack)
-                    created_lines.append(line)
-                except Exception as e:
-                    errors.append(f"Ligne {index + 1}: {str(e)}")
-            else:
-                error_message = self._get_serializer_error_message(serializer.errors)
-                errors.append(f"Ligne {index + 1}: {error_message}")
-        
-        if errors:
-            transaction.set_rollback(True)
-            return Response(
-                {"message": "Certaines lignes n'ont pas pu être créées", "errors": errors},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        return Response(
-            LineSerializer(created_lines, many=True).data,
-            status=status.HTTP_201_CREATED
-        )
+            # Delete lines not in the request
+            instance.lines.exclude(id__in=request_line_ids).delete()
+            
+            # Update or create lines
+            for line_data in lines_data:
+                line_id = line_data.get('id')
+                if line_id:
+                    # Update existing line
+                    try:
+                        line = Line.objects.get(id=line_id, pack=instance)
+                        for attr, value in line_data.items():
+                            if attr != 'id':  # Don't update the ID
+                                setattr(line, attr, value)
+                        line.save()
+                    except Line.DoesNotExist:
+                        # Create new line if ID doesn't exist
+                        Line.objects.create(pack=instance, **line_data)
+                else:
+                    # Create new line
+                    Line.objects.create(pack=instance, **line_data)
+        # If lines data is None but it's a PATCH request, don't modify lines
+        # (partial update might not include lines field)
 
     def _get_serializer_error_message(self, errors):
         """Convert serializer errors to French message format."""

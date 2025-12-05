@@ -62,8 +62,14 @@ class PackCreateSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'lines']
 
     def validate_name(self, value):
-        if Pack.objects.filter(name=value).exists():
-            raise serializers.ValidationError({"message": "Un pack avec ce nom existe déjà"})
+        if self.instance:
+            # For updates, exclude current instance
+            if Pack.objects.exclude(pk=self.instance.pk).filter(name=value).exists():
+                raise serializers.ValidationError({"message": "Un pack avec ce nom existe déjà"})
+        else:
+            # For creates
+            if Pack.objects.filter(name=value).exists():
+                raise serializers.ValidationError({"message": "Un pack avec ce nom existe déjà"})
         return value
 
     def create(self, validated_data):

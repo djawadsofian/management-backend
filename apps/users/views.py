@@ -232,7 +232,11 @@ def my_calendar(request):
                 'city': project.client.address.get('city', ''),
                 'postal_code': project.client.address.get('postal_code', ''),
             }
-        
+        assigned_employers_info = []
+        for employer in project.assigned_employers.all():
+                assigned_employers_info.append(   
+                   employer.get_full_name() or employer.username   
+                )
         # Single project event (combining start and end)
         if event_type in ['all', 'project']:
             project_event = {
@@ -244,12 +248,14 @@ def my_calendar(request):
                 'project_name': project.name,
                 'client_name': project.client.name,
                 'client_address': client_address,
+                'team': assigned_employers_info,
                 'status': project.status,
                 'is_verified': project.is_verified,
                 'start_date': project.start_date.isoformat(),
                 'end_date': project.end_date.isoformat() if project.end_date else None,
                 'duration_days': project.duration_days,
                 'progress_percentage': project.progress_percentage,
+                
             }
             
             # If project has end date, use it as the end date for the calendar event
@@ -274,6 +280,7 @@ def my_calendar(request):
                     'end': maintenance.end_date.isoformat(),
                     'type': 'maintenance',
                     'maintenance_type': maintenance.maintenance_type,  # Added maintenance type
+                    'team': assigned_employers_info,
                     'project_id': project.id,
                     'project_name': project.name,
                     'client_name': project.client.name,
