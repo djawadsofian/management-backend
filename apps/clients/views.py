@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.core.pagination import StaticPagination
 from .models import Client
 from .serializers import ClientSerializer
-from apps.core.permissions import IsAdmin
+from apps.core.permissions import IsAdminOrAssistant
 
 
 class ClientFilter(filters.FilterSet):
@@ -49,4 +49,4 @@ class ClientViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [IsAuthenticated()]
-        return [IsAdmin()]
+        return [IsAdminOrAssistant]
