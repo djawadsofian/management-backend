@@ -23,8 +23,16 @@ class FCMDeviceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        return FCMDevice.objects.filter(user=self.request.user)
-    
+    # When drf_yasg is generating Swagger documentation
+        if getattr(self, 'swagger_fake_view', False):
+            return FCMDevice.objects.none()
+
+        user = self.request.user
+
+        if user.is_anonymous:
+            return FCMDevice.objects.none()
+
+        return FCMDevice.objects.filter(user=user)
     def create(self, request, *args, **kwargs):
         """Register or update FCM device token"""
         registration_id = request.data.get('registration_id')
