@@ -40,7 +40,7 @@ class FCMService:
         ]
         
         try:
-            response = messaging.send_all(messages)
+            response = messaging.send_each(messages)
             logger.info(f"✅ FCM sent: {response.success_count} success, {response.failure_count} failures")
             return {'success': True, 'success_count': response.success_count}
         except Exception as e:
