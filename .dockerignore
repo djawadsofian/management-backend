@@ -1,0 +1,12 @@
+.git
+.gitignore
+venv/
+*.env
+*.pyc
+**/__pycache__/
+**/db.sqlite3
+**/migrations/
+Dockerfile
+docker-compose*
+README.md
+.vscode

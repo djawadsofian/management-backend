@@ -135,8 +135,12 @@
 # config/asgi.py
 import os
 from django.core.asgi import get_asgi_application
+from .settings.base import DEBUG
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+if DEBUG:
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.development')
+else:
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.production')
 
 # Initialize Django ASGI application early to ensure the AppRegistry
 # is populated before importing code that may import ORM models.

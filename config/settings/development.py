@@ -41,3 +41,14 @@ LOGGING = {
 #     'handlers': ['console'],
 #     'level': 'DEBUG',
 # }
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'elevator_db',
+        'USER': 'elevator_user',
+        'PASSWORD': 'elevator_pass',
+        'HOST': 'postgres',
+        'PORT': '5432',
+    }
+}
