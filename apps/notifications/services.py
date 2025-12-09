@@ -8,6 +8,10 @@ from apps.notifications.models import Notification, NotificationPreference
 from apps.notifications.signals import notification_created
 import logging
 
+# Optional import for FCM service; if the module is unavailable, fall back to None
+
+from apps.fcm.services import fcm_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,20 +55,7 @@ class NotificationService:
         data=None
     ):
         """
-        Create a new notification
-        
-        Args:
-            recipient: User to receive notification
-            notification_type: Type of notification
-            title: Notification title
-            message: Notification message
-            priority: Priority level
-            related_project: Related project (optional)
-            related_maintenance: Related maintenance (optional)
-            data: Additional JSON data (optional)
-        
-        Returns:
-            Notification instance or None if not created
+        Create a new notification and send FCM push notification
         """
         # Check if notification should be sent
         if not NotificationService._should_send_notification(recipient, notification_type):
@@ -90,6 +81,38 @@ class NotificationService:
                 notification=notification,
                 recipient=recipient
             )
+            
+            # ✨ NEW: Send FCM push notification
+            try:
+                fcm_data = {
+                    'notification_id': str(notification.id),
+                    'type': notification_type,
+                    'priority': priority,
+                }
+                
+                if related_project:
+                    fcm_data['project_id'] = str(related_project.id)
+                    fcm_data['project_name'] = related_project.name
+                
+                if related_maintenance:
+                    fcm_data['maintenance_id'] = str(related_maintenance.id)
+                
+                if related_product:
+                    fcm_data['product_id'] = str(related_product.id)
+                    fcm_data['product_name'] = related_product.name
+                
+                # Send FCM notification
+                fcm_service.send_notification_to_user(
+                    user=recipient,
+                    title=title,
+                    body=message,
+                    data=fcm_data
+                )
+                logger.info(f"📤 FCM notification sent to {recipient.username}")
+                
+            except Exception as fcm_error:
+                logger.error(f"❌ FCM send failed: {fcm_error}")
+                # Don't fail the notification creation if FCM fails
             
             logger.info(f"Notification created: {notification.id} for {recipient.username}")
             return notification

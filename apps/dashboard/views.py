@@ -663,7 +663,47 @@ class FinancialAnalyticsView(APIView):
             total_revenue_paid_all_time=Sum('total', filter=Q(status=Invoice.STATUS_PAID)),
             total_deposit_issued=Sum('deposit_price', filter=Q(status=Invoice.STATUS_ISSUED)), 
         )
+
+
+        # Add payment method breakdown
+        payment_method_stats = Invoice.objects.filter(
+            paid_date__gte=start_date,
+            paid_date__lte=end_date,
+            status=Invoice.STATUS_PAID
+        ).values('payment_method').annotate(
+            revenue=Sum('total'),
+            invoice_count=Count('id'),
+        )
+
+        # Initialize metrics for each payment method
+        payment_method_metrics = {}
+        for method in ['espece', 'chèque', 'ccp']:
+            payment_method_metrics[f'revenue_{method}'] = 0
+            payment_method_metrics[f'net_revenue_{method}'] = 0
+            payment_method_metrics[f'invoice_count_{method}'] = 0
+
+        # Calculate actual values
+        for stat in payment_method_stats:
+            method = stat.get('payment_method')
+            if method in ['espece', 'chèque', 'ccp']:
+                # Get invoices for this payment method
+                method_invoices = Invoice.objects.filter(
+                    paid_date__gte=start_date,
+                    paid_date__lte=end_date,
+                    status=Invoice.STATUS_PAID,
+                    payment_method=method
+                ).prefetch_related('lines__product')
+                
+                # Calculate net revenue for this payment method
+                method_net_revenue = self.calculate_invoice_net_revenue(method_invoices)
+                
+                payment_method_metrics[f'revenue_{method}'] = float(stat['revenue'] or 0)
+                payment_method_metrics[f'net_revenue_{method}'] = float(method_net_revenue)
+                payment_method_metrics[f'invoice_count_{method}'] = stat['invoice_count'] or 0
+
+
         
+                
         response_data = {
             'generated_at': timezone.now().isoformat(),
             'date_range': {
@@ -684,6 +724,8 @@ class FinancialAnalyticsView(APIView):
                 'avg_payment_amount': float(total_revenue / payment_stats['total_invoices_paid']) 
                     if payment_stats['total_invoices_paid'] else 0,
                 'avg_days_to_payment': round(payment_stats['avg_days_to_payment'] or 0, 1),
+                # Payment method breakdown
+                **payment_method_metrics,
             },
             'current_invoice_status': {
                 'issued_invoices': current_invoice_stats['total_issued'] or 0,

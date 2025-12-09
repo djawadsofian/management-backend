@@ -69,7 +69,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'subtotal', 'tva', 'tax_amount', 'total', 'deposit_price', 
             'status', 'created_by', 'created_by_name', 'created_at',
             'is_draft', 'is_issued', 'is_paid', 'is_editable', 'stock_is_affected',
-            'lines','deposit_date'
+            'lines','deposit_date' ,'payment_method'
         ]
         read_only_fields = ['subtotal', 'tax_amount', 'total', 'created_at', 
                            'is_draft', 'is_issued', 'is_paid', 'is_editable', 'stock_is_affected','paid_date','issued_date']
@@ -83,7 +83,7 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'project', 'bon_de_commande', 'bon_de_versement', 
             'bon_de_reception', 'facture', 'due_date', 'tva', 'deposit_price', 
-            'status', 'lines','deposit_date'
+            'status', 'lines','deposit_date', 'payment_method'
         ]
         read_only_fields = ['status','facture']  # Always starts as DRAFT
 
@@ -116,7 +116,7 @@ class InvoiceUpdateSerializer(serializers.ModelSerializer):
         model = Invoice
         fields = [
             'project', 'bon_de_commande', 'bon_de_versement', 
-            'bon_de_reception', 'facture', 'due_date', 'tva', 'deposit_price', 'deposit_date'
+            'bon_de_reception', 'facture', 'due_date', 'tva', 'deposit_price', 'deposit_date', 'payment_method'
         ]
 
     def validate(self, data):

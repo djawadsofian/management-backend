@@ -56,7 +56,7 @@ class InvoiceViewSet(
     pagination_class = StaticPagination
     
     # Filtering configuration
-    filterset_fields = ['status', 'project', 'created_by','facture']
+    filterset_fields = ['status', 'project', 'created_by','facture','payment_method']
     search_fields = [
         'bon_de_commande', 'bon_de_versement',
         'bon_de_reception', 'facture', 'project__name',
@@ -83,7 +83,7 @@ class InvoiceViewSet(
         if self.action in ['list', 'retrieve', 'can_issue']:
             from rest_framework.permissions import IsAuthenticated
             return [IsAuthenticated()]
-        return [IsAdminOrAssistant()]  # Updated to include assistants
+        return [IsAdminOrAssistant]  # Updated to include assistants
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -348,7 +348,7 @@ class InvoiceLineViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         """Allow admins and assistants to modify"""
-        return [IsAdminOrAssistant()]  # Updated to include assistants
+        return [IsAdminOrAssistant]  # Updated to include assistants
 
     def get_queryset(self):
         """Filter lines by invoice if invoice_pk is provided"""

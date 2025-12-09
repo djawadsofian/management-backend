@@ -21,7 +21,7 @@ from apps.core.mixins import (
     SetCreatedByMixin
 )
 from apps.core.pagination import StaticPagination
-from apps.core.permissions import IsAdminOrReadOnly
+from apps.core.permissions import IsAdminOrAssistant, IsAdminOrReadOnly
 from .models import Project, Maintenance
 from .serializers import (
     ProjectListSerializer,
@@ -46,7 +46,7 @@ class ProjectViewSet(
         'client', 'verified_by', 'created_by'
     ).prefetch_related('assigned_employers', 'maintenances')
     
-    permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
+    permission_classes = [IsAdminOrAssistant]
     pagination_class = StaticPagination
     
     filterset_fields = ['start_date', 'end_date', 'is_verified', 'client', 'invoices__facture']
@@ -309,7 +309,7 @@ class MaintenanceViewSet(
     """
     queryset = Maintenance.objects.select_related('project__client')
     serializer_class = MaintenanceSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
+    permission_classes = [IsAdminOrAssistant]
     pagination_class = StaticPagination
     
     filterset_fields = ['start_date', 'end_date', 'project', 'maintenance_type']

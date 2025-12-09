@@ -52,6 +52,8 @@ class Invoice(TimeStampedModel):
     due_date = models.DateField(null=True, blank=True, db_index=True)
     paid_date = models.DateField(null=True, blank=True, db_index=True)
     deposit_date = models.DateField(null=True, blank=True, db_index=True)
+    payment_method = models.CharField(max_length=100, blank=True, null=True)
+
     
     
     # Subtotal before tax
