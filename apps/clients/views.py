@@ -49,4 +49,4 @@ class ClientViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [IsAuthenticated()]
-        return [IsAdminOrAssistant]
+        return [IsAdminOrAssistant()]
