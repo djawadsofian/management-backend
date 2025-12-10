@@ -23,7 +23,7 @@ DEBUG = env('DEBUG')
 FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'firebase-credentials.json')
 
 # ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
-ALLOWED_HOSTS = ['*']
+# ALLOWED_HOSTS = ['*']
 
 # Application definition
 INSTALLED_APPS = [
