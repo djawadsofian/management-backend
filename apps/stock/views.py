@@ -125,3 +125,25 @@ class ProductViewSet(
                 {'message': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+
+    def list(self, request, *args, **kwargs):
+        # Get the original response
+        response = super().list(request, *args, **kwargs)
+        
+        # Calculate totals for the current filtered queryset
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Calculate totals
+        from django.db.models import F, Sum
+        
+        totals = queryset.aggregate(
+            total_buying_price=Sum(F('quantity') * F('buying_price')),
+            total_selling_price=Sum(F('quantity') * F('selling_price'))
+        )
+        
+        # Add totals to response data
+        response.data['total_buying_price'] = totals['total_buying_price'] or 0
+        response.data['total_selling_price'] = totals['total_selling_price'] or 0
+        
+        return response
