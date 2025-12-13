@@ -26,6 +26,8 @@ from apps.stock.models import Product
 from apps.clients.models import Client
 from apps.users.models import CustomUser
 from config import settings
+from django.db.models.functions import TruncMonth, TruncDate
+from django.db.models import Value
 
 
 
@@ -381,9 +383,9 @@ class ProjectAnalyticsView(APIView):
         # ===== PROJECT TIMELINE ANALYSIS =====
         timeline_stats = Project.objects.filter(
             created_at__date__gte=six_months_ago
-        ).extra({
-            'month': "strftime('%%Y-%%m', created_at)"
-        }).values('month').annotate(
+        ).annotate(
+            month=TruncMonth('created_at')
+        ).values('month').annotate(
             created=Count('id'),
             verified=Count('id', filter=Q(is_verified=True)),
             with_maintenance=Count('id', filter=Q(
@@ -397,7 +399,7 @@ class ProjectAnalyticsView(APIView):
             end_date__isnull=False
         ).annotate(
             duration_days=ExpressionWrapper(
-                F('end_date') - F('start_date'),
+                (F('end_date') - F('start_date')) * Value(1, output_field=IntegerField()),
                 output_field=IntegerField()
             )
         ).aggregate(
@@ -510,7 +512,7 @@ class FinancialAnalyticsView(APIView):
     """
     Financial analytics with revenue tracking using paid_date
     """
-    permission_classes = [IsAdminOrAssistant ]
+    permission_classes = [IsAdminOrAssistant]
 
     def calculate_invoice_net_revenue(self, invoices):
         """Calculate net revenue for a set of invoices"""
@@ -570,18 +572,16 @@ class FinancialAnalyticsView(APIView):
             paid_date__gte=start_date,
             paid_date__lte=end_date,
             status=Invoice.STATUS_PAID
-        ).extra({
-            'date': "DATE(paid_date)"
-        }).values('date').annotate(
+        ).annotate(
+            date=TruncDate('paid_date')
+        ).values('date').annotate(
             revenue=Sum('total'),
             invoice_count=Count('id'),
         ).order_by('date')
 
         # Add net revenue to each day
         for day_data in revenue_trend:
-            date_str = day_data['date']
-            # Convert string back to date object
-            date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+            date_obj = day_data['date']
             day_invoices = Invoice.objects.filter(
                 paid_date__gte=date_obj,
                 paid_date__lt=date_obj + timedelta(days=1),
@@ -664,7 +664,6 @@ class FinancialAnalyticsView(APIView):
             total_deposit_issued=Sum('deposit_price', filter=Q(status=Invoice.STATUS_ISSUED)), 
         )
 
-
         # Add payment method breakdown
         payment_method_stats = Invoice.objects.filter(
             paid_date__gte=start_date,
@@ -701,9 +700,6 @@ class FinancialAnalyticsView(APIView):
                 payment_method_metrics[f'net_revenue_{method}'] = float(method_net_revenue)
                 payment_method_metrics[f'invoice_count_{method}'] = stat['invoice_count'] or 0
 
-
-        
-                
         response_data = {
             'generated_at': timezone.now().isoformat(),
             'date_range': {
